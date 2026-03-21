@@ -1,5 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
-import type { FormEvent } from 'react'
+import { useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { SearchResult } from './types'
 import './App.css'
 
@@ -150,99 +149,136 @@ function App() {
   }
 
   return (
-    <div className="app-shell">
-      <header>
-        <div>
-          <p className="eyebrow">Partaking</p>
-          <h1>Cross-marketplace part intelligence</h1>
-          <p className="lede">
-            Enter any OEM or supplier part number and we&apos;ll query Amazon, eBay, Digi-Key, and Mouser via
-            SerpAPI. Matches are scored with a lightweight fuzzy AI check so you only act on confident hits.
-          </p>
+    <div className="page">
+      <header className="nav glass">
+        <div className="brand">
+          <div className="badge">PK</div>
+          <div>
+            <strong>PartsKing</strong>
+            <p>Multi-source parts hunting</p>
+          </div>
         </div>
+        <div className="nav-links">
+          <a href="#overview">Overview</a>
+          <a href="#results">Catalog</a>
+          <a href="#workflow">Workflow</a>
+        </div>
+        <span className="pill">SerpAPI + local cache</span>
       </header>
 
-      <main>
-        <form className="search-panel" onSubmit={handleSubmit}>
-          <label>
-            Part number
-            <input
-              type="text"
-              placeholder="e.g. LM358N"
-              value={partNumber}
-              onChange={(event) => setPartNumber(event.target.value)}
-            />
-          </label>
-
-          <div className="confidence-row">
-            <span>Minimum confidence</span>
-            <div className="chip-group">
-              {confidenceBands.map((band) => (
-                <button
-                  key={band.value}
-                  type="button"
-                  className={band.value === minConfidence ? 'chip active' : 'chip'}
-                  onClick={() => setMinConfidence(band.value)}
-                >
-                  {band.label}
-                </button>
-              ))}
+      <main className="container">
+        <section className="hero glass" id="overview">
+          <div className="hero-main">
+            <p className="eyebrow">Supplier search • Cache-first responses • Export-friendly</p>
+            <h1>Turn a single part number into cross-marketplace intel.</h1>
+            <p className="lede">
+              PartsKing pulls Amazon, eBay, Digi-Key, Mouser, and the supplier domains you asked for via SerpAPI, then
+              stores the matches locally so you never repeat the same lookup twice.
+            </p>
+            <div className="hero-stats">
+              <div className="stat">
+                <strong>11 sources</strong>
+                <span>Jack&apos;s, Pro Auto Parts Direct, Exmark, BMI, Safford, and more.</span>
+              </div>
+              <div className="stat">
+                <strong>Cache w/ TTL</strong>
+                <span>Uses SQLite + API TTL so previously sourced SKUs respond instantly.</span>
+              </div>
+              <div className="stat">
+                <strong>Confidence filter</strong>
+                <span>Normalized Levenshtein score keeps mismatched listings out.</span>
+              </div>
             </div>
           </div>
 
-          {cachedParts.length > 0 && (
-            <div className="cached-hint">
-              <span>Cached parts ready for offline lookup:</span>
-              <div className="chip-group">
-                {cachedParts.map((cachedPart) => (
-                  <button
-                    key={cachedPart}
-                    type="button"
-                    className="chip"
-                    onClick={() => handleCachedSelect(cachedPart)}
-                  >
-                    {cachedPart}
-                  </button>
-                ))}
+          <div className="hero-panel glass">
+            <div className="panel-head">
+              <div>
+                <span className="pill">Search the catalog</span>
+                <h2>Query suppliers</h2>
               </div>
+              <button type="button" className="ghost" onClick={() => setPartNumber('LM358N')}>
+                Load sample SKU
+              </button>
             </div>
-          )}
+            <form className="search-panel" onSubmit={handleSubmit}>
+              <label>
+                Part number
+                <input
+                  type="text"
+                  placeholder="e.g. LM358N"
+                  value={partNumber}
+                  onChange={(event) => setPartNumber(event.target.value)}
+                />
+              </label>
 
-          <button type="submit" disabled={isLoading}>
-            {isLoading ? 'Searching…' : 'Search marketplaces'}
-          </button>
-          {error && <p className="error">{error}</p>}
-        </form>
+              <div className="confidence-row">
+                <span>Minimum confidence</span>
+                <div className="chip-group">
+                  {confidenceBands.map((band) => (
+                    <button
+                      key={band.value}
+                      type="button"
+                      className={band.value === minConfidence ? 'chip active' : 'chip'}
+                      onClick={() => setMinConfidence(band.value)}
+                    >
+                      {band.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-        <section className="results">
-          <div className="results-header">
+              {cachedParts.length > 0 && (
+                <div className="cached-hint">
+                  <span>Cached SKUs</span>
+                  <div className="chip-group">
+                    {cachedParts.slice(0, 6).map((cachedPart) => (
+                      <button key={cachedPart} type="button" className="chip" onClick={() => handleCachedSelect(cachedPart)}>
+                        {cachedPart}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <button type="submit" disabled={isLoading} className="btn btn-primary">
+                {isLoading ? 'Searching…' : 'Search suppliers'}
+              </button>
+              {error && <p className="error">{error}</p>}
+            </form>
+          </div>
+        </section>
+
+        <section className="section glass" id="results">
+          <div className="section-head">
             <div>
-              <h2>
-                Matches
-                {resultOrigin === 'cache' && <span className="result-origin"> (cached)</span>}
-              </h2>
-              {cachedAt && <p className="timestamp">Last refreshed {formatTimestamp(cachedAt)}</p>}
+              <span className="pill">Supplier catalog</span>
+              <h2>Live matches</h2>
+              {resultOrigin === 'cache' && <p className="muted">Served from cache {cachedAt && `(${formatTimestamp(cachedAt)})`}</p>}
+              {resultOrigin === 'live' && cachedAt && <p className="muted">Fresh lookup {formatTimestamp(cachedAt)}</p>}
             </div>
-            <p>
-              {filteredResults.length} results ≥ {minConfidence.toFixed(1)} confidence
-            </p>
+            <div className="result-count">
+              <strong>{filteredResults.length}</strong>
+              <span>results ≥ {minConfidence.toFixed(1)}</span>
+            </div>
           </div>
 
           {filteredResults.length === 0 && !isLoading ? (
             <div className="empty-state">
-              <p>No matches yet. Run a search or loosen the confidence threshold.</p>
+              <p>Run a lookup to populate this panel. Cached requests will appear instantly.</p>
             </div>
           ) : (
-            <ul>
+            <div className="result-grid">
               {filteredResults.map((result) => (
-                <li key={result.id} className="result-card">
-                  <div className="result-meta">
-                    <span className="source-pill">{result.source}</span>
+                <article key={result.id} className="result-card">
+                  <header>
+                    <p className="source">{result.source}</p>
                     <span className="confidence">{Math.round(result.confidence * 100)}% match</span>
-                  </div>
+                  </header>
                   <a href={result.url} target="_blank" rel="noreferrer">
                     <h3>{result.title}</h3>
                   </a>
+                  {result.description && <p className="muted">{result.description}</p>}
                   <div className="result-details">
                     {result.price && <span className="price">{result.price}</span>}
                     {result.inStock !== undefined && (
@@ -251,18 +287,44 @@ function App() {
                       </span>
                     )}
                   </div>
-                </li>
+                </article>
               ))}
-            </ul>
+            </div>
           )}
+        </section>
+
+        <section className="section glass" id="workflow">
+          <h2>How the PartsKing workflow runs</h2>
+          <p className="lead">
+            Built with the same design language as the Hack&Haul project—hero layout, glass panels, gradients—so it
+            feels like a polished 21st-inspired property tech site instead of a raw admin page.
+          </p>
+          <div className="grid-3">
+            <div className="card">
+              <div className="feature-icon">01</div>
+              <h3>Search + cache</h3>
+              <p className="muted">SerpAPI fetches the dealers you listed, then results are cached in SQLite.</p>
+            </div>
+            <div className="card">
+              <div className="feature-icon">02</div>
+              <h3>Confidence gate</h3>
+              <p className="muted">Use the chip selector to require 40/60/80% normalized similarity.</p>
+            </div>
+            <div className="card">
+              <div className="feature-icon">03</div>
+              <h3>Export-ready</h3>
+              <p className="muted">Each card links to the supplier listing so you can verify and drop it into your pipeline.</p>
+            </div>
+          </div>
         </section>
       </main>
 
-      <footer>
-        <p>
-          Tip: add your SerpAPI key to <code>.env.local</code>, run <code>pnpm dev:full</code>, and keep this repo private if
-          you don&apos;t want to expose the key in the browser.
-        </p>
+      <footer className="footer glass">
+        <div>
+          <strong>PartsKing</strong>
+          <p className="muted">Multi-marketplace parts intelligence</p>
+        </div>
+        <p className="muted">Powered by SerpAPI + local caching. Configure keys in .env.local.</p>
       </footer>
     </div>
   )
