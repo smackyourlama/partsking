@@ -1,0 +1,15 @@
+* {
+  font-family: inherit;
+  font-feature-settings: 'ss02' on;
+}
+
+body {
+  margin: 0;
+  background: #f5f5f6;
+  color: #101828;
+  font-family: 'Space Grotesk', 'Inter', system-ui, -apple-system, BlinkMacSystemFont, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
