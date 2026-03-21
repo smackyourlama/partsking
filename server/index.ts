@@ -34,7 +34,13 @@ app.get('/api/parts', async (req: Request, res: Response) => {
   try {
     const cached = await readCachedResults(partNumber, CACHE_TTL_HOURS)
     if (cached) {
-      return res.json({ partNumber, results: cached.filter((item) => item.confidence >= minConfidence), source: 'cache' })
+      const filteredCache = cached.results.filter((item) => item.confidence >= minConfidence)
+      return res.json({
+        partNumber,
+        results: filteredCache,
+        source: 'cache',
+        cachedAt: cached.scrapedAt,
+      })
     }
 
     if (!hasSerpApiKey) {
@@ -44,7 +50,7 @@ app.get('/api/parts', async (req: Request, res: Response) => {
     const liveResults = await runMarketplaceSearches(partNumber)
     await writeCachedResults(partNumber, liveResults)
     const filtered = liveResults.filter((item) => item.confidence >= minConfidence)
-    res.json({ partNumber, results: filtered, source: 'live' })
+    res.json({ partNumber, results: filtered, source: 'live', cachedAt: new Date().toISOString() })
   } catch (error) {
     console.error('[part-search] error', error)
     res.status(500).json({ error: 'Unable to fetch part data right now.' })
@@ -75,7 +81,7 @@ app.get('/api/cache/:partNumber', async (req: Request, res: Response) => {
     if (!cached) {
       return res.status(404).json({ error: 'No cached data for that part number yet.' })
     }
-    res.json({ results: cached })
+    res.json({ results: cached.results, cachedAt: cached.scrapedAt })
   } catch (error) {
     console.error('[cache:fetch] error', error)
     res.status(500).json({ error: 'Unable to read cache entry right now.' })

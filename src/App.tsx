@@ -1,6 +1,5 @@
-import type { FormEvent } from 'react'
-import { useEffect, useMemo, useState } from 'react'
-import type { SearchResult } from './types'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { SearchResult } from './types'
 import './App.css'
 
 const confidenceBands = [
@@ -11,6 +10,17 @@ const confidenceBands = [
 
 type ResultOrigin = 'live' | 'cache' | null
 
+type ApiResponse = {
+  results: SearchResult[]
+  source?: ResultOrigin
+  cachedAt?: string
+}
+
+type CachedResult = {
+  results: SearchResult[]
+  cachedAt?: string
+}
+
 function App() {
   const [partNumber, setPartNumber] = useState('')
   const [minConfidence, setMinConfidence] = useState(0.6)
@@ -19,6 +29,7 @@ function App() {
   const [error, setError] = useState<string | null>(null)
   const [resultOrigin, setResultOrigin] = useState<ResultOrigin>(null)
   const [cachedParts, setCachedParts] = useState<string[]>([])
+  const [cachedAt, setCachedAt] = useState<string | null>(null)
 
   useEffect(() => {
     let isMounted = true
@@ -60,6 +71,7 @@ function App() {
       setError(null)
       setResults([])
       setResultOrigin(null)
+      setCachedAt(null)
 
       const params = new URLSearchParams({
         partNumber: trimmedPart,
@@ -70,32 +82,35 @@ function App() {
         const payload = await response.json().catch(() => ({}))
         throw new Error(payload.error || 'Search failed. Try again later.')
       }
-      const data = (await response.json()) as { results: SearchResult[]; source?: ResultOrigin }
+      const data = (await response.json()) as ApiResponse
       setResults(data.results)
       setResultOrigin(data.source ?? 'live')
+      setCachedAt(data.cachedAt ?? null)
     } catch (err) {
       const friendly = err instanceof Error ? err.message : 'Unexpected error occurred.'
       const cachedResults = await loadCachedResults(trimmedPart)
 
       if (cachedResults) {
-        setResults(cachedResults)
+        setResults(cachedResults.results)
         setResultOrigin('cache')
+        setCachedAt(cachedResults.cachedAt ?? null)
         setError(`${friendly} Showing cached snapshot instead.`)
       } else {
         setError(friendly)
         setResultOrigin(null)
+        setCachedAt(null)
       }
     } finally {
       setIsLoading(false)
     }
   }
 
-  const loadCachedResults = async (value: string): Promise<SearchResult[] | null> => {
+  const loadCachedResults = async (value: string): Promise<CachedResult | null> => {
     try {
       const response = await fetch(`/api/cache/${encodeURIComponent(value)}`)
       if (!response.ok) return null
-      const data = (await response.json()) as { results: SearchResult[] }
-      return data.results
+      const data = (await response.json()) as CachedResult
+      return data
     } catch (error) {
       console.warn('[cache-fallback] unable to load cached results', error)
       return null
@@ -107,17 +122,30 @@ function App() {
     setIsLoading(true)
     setError(null)
     setResultOrigin(null)
+    setCachedAt(null)
 
     const cachedResults = await loadCachedResults(value)
     if (cachedResults) {
-      setResults(cachedResults)
+      setResults(cachedResults.results)
       setResultOrigin('cache')
+      setCachedAt(cachedResults.cachedAt ?? null)
     } else {
       setResults([])
       setError('No cached snapshot for that part yet. Run a live search to populate it.')
     }
 
     setIsLoading(false)
+  }
+
+  const formatTimestamp = (value: string) => {
+    try {
+      return new Intl.DateTimeFormat(undefined, {
+        dateStyle: 'medium',
+        timeStyle: 'short',
+      }).format(new Date(value))
+    } catch {
+      return value
+    }
   }
 
   return (
@@ -187,10 +215,13 @@ function App() {
 
         <section className="results">
           <div className="results-header">
-            <h2>
-              Matches
-              {resultOrigin === 'cache' && <span className="result-origin"> (cached)</span>}
-            </h2>
+            <div>
+              <h2>
+                Matches
+                {resultOrigin === 'cache' && <span className="result-origin"> (cached)</span>}
+              </h2>
+              {cachedAt && <p className="timestamp">Last refreshed {formatTimestamp(cachedAt)}</p>}
+            </div>
             <p>
               {filteredResults.length} results ≥ {minConfidence.toFixed(1)} confidence
             </p>
@@ -211,7 +242,6 @@ function App() {
                   <a href={result.url} target="_blank" rel="noreferrer">
                     <h3>{result.title}</h3>
                   </a>
-                  {result.description && <p className="result-description">{result.description}</p>}
                   <div className="result-details">
                     {result.price && <span className="price">{result.price}</span>}
                     {result.inStock !== undefined && (

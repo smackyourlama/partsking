@@ -11,7 +11,8 @@
     "build": "tsc -b tsconfig.app.json tsconfig.node.json tsconfig.server.json && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "scrape:seed": "tsx scripts/cacheParts.ts"
+    "scrape:seed": "tsx scripts/cacheParts.ts",
+    "prune:cache": "tsx scripts/pruneCache.ts"
   },
   "dependencies": {
     "better-sqlite3": "^12.8.0",

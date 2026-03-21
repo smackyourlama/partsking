@@ -41,6 +41,9 @@ const readStmt = sqlite.prepare(
      WHERE part_number = ? AND scraped_at >= datetime('now', ?)
      ORDER BY confidence DESC`,
 )
+const pruneStmt = sqlite.prepare(
+  `DELETE FROM part_listings WHERE scraped_at < datetime('now', ?)`,
+)
 
 export function writeListings(partNumber: string, results: SearchResult[]) {
   if (!results.length) return
@@ -68,10 +71,17 @@ export function readListings(partNumber: string, maxAgeHours: number) {
   const ttlWindow = `-${maxAgeHours} hours`
   const rows = readStmt.all(partNumber, ttlWindow) as { payload: string; scraped_at: string }[]
   if (!rows.length) return null
-  return rows.map((row) => JSON.parse(row.payload) as SearchResult)
+  const scrapedAt = rows[0]?.scraped_at ?? new Date().toISOString()
+  const results = rows.map((row) => JSON.parse(row.payload) as SearchResult)
+  return { results, scrapedAt }
 }
 
 export function listPartNumbers(): string[] {
   const rows = listStmt.all() as { part_number: string }[]
   return rows.map((row) => row.part_number)
+}
+
+export function pruneListings(maxAgeHours: number) {
+  const ttlWindow = `-${maxAgeHours} hours`
+  pruneStmt.run(ttlWindow)
 }

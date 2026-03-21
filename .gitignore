@@ -26,3 +26,4 @@ dist-ssr
 .cache/
 __pycache__/
 scraper/__pycache__/
+data/parts.db

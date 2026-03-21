@@ -144,6 +144,12 @@ header .lede {
   color: #0f172a;
 }
 
+.timestamp {
+  margin: 4px 0 0;
+  font-size: 0.85rem;
+  color: #475467;
+}
+
 .results ul {
   list-style: none;
   padding: 0;

@@ -48,7 +48,7 @@ pnpm scrape:seed    # reads data/seed_parts.json and writes to data/parts.db
 ```bash
 pnpm dev:full   # runs Vite UI (5173) + Express API (4000)
 ```
-- Frontend: http://localhost:5173
+- Frontend: http://localhost:3765
 - API: http://localhost:4000/api/parts?partNumber=LM358N
 
 ### Production build
@@ -63,6 +63,7 @@ pnpm preview    # serves built React bundle for inspection
 - When a cache miss occurs and `SERPAPI_KEY` is configured, the API fetches fresh listings, stores them in
   SQLite, and returns the filtered list.
 - You can periodically re-run `pnpm scrape:seed` (e.g., cron) to refresh known SKUs offline.
+- Use `pnpm prune:cache [hours]` to delete rows older than your retention window.
 
 ## Simple AI / scoring
 The matching confidence is a normalized Levenshtein score (0–1). Requests can enforce a minimum confidence via
@@ -88,3 +89,9 @@ python -m scraper.runner --part LM358N --limit 5 --write
 ```
 
 That fetches each supplier catalog (Shopify/WooCommerce/Shift4Shop parsers today), writes the normalized listings into `data/parts.db`, and the UI/API immediately serve the data via the existing `/api/parts` route.
+
+### Getting started
+
+- `pnpm install`
+- `cp .env.example .env.local` and set `SERPAPI_KEY`
+- `pnpm dev:full` → API on :4000, UI on http://localhost:3765
