@@ -1,5 +1,6 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
-import { SearchResult } from './types'
+import { useEffect, useMemo, useState } from 'react'
+import type { FormEvent } from 'react'
+import type { SearchResult } from './types'
 import './App.css'
 
 const confidenceBands = [
