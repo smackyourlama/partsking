@@ -163,7 +163,7 @@ function App() {
           <a href="#results">Catalog</a>
           <a href="#workflow">Workflow</a>
         </div>
-        <span className="pill">SerpAPI + local cache</span>
+        <span className="pill">Scrapling + local cache</span>
       </header>
 
       <main className="container">
@@ -172,8 +172,7 @@ function App() {
             <p className="eyebrow">Supplier search • Cache-first responses • Export-friendly</p>
             <h1>Turn a single part number into cross-marketplace intel.</h1>
             <p className="lede">
-              PartsKing pulls Amazon, eBay, Digi-Key, Mouser, and the supplier domains you asked for via SerpAPI, then
-              stores the matches locally so you never repeat the same lookup twice.
+              PartsKing pulls Amazon, eBay, Digi-Key, Mouser, and the supplier domains you asked for via a Scrapling crawler, then stores the matches locally so you never repeat the same lookup twice.
             </p>
             <div className="hero-stats">
               <div className="stat">
@@ -303,7 +302,7 @@ function App() {
             <div className="card">
               <div className="feature-icon">01</div>
               <h3>Search + cache</h3>
-              <p className="muted">SerpAPI fetches the dealers you listed, then results are cached in SQLite.</p>
+              <p className="muted">The Scrapling runner fetches the dealers you listed, then results are cached in SQLite.</p>
             </div>
             <div className="card">
               <div className="feature-icon">02</div>
@@ -324,7 +323,7 @@ function App() {
           <strong>PartsKing</strong>
           <p className="muted">Multi-marketplace parts intelligence</p>
         </div>
-        <p className="muted">Powered by SerpAPI + local caching. Configure keys in .env.local.</p>
+        <p className="muted">Powered by the Scrapling crawler + local caching. Configure Python + env in .env.local.</p>
       </footer>
     </div>
   )

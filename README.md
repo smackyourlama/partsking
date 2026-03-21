@@ -1,15 +1,13 @@
 # PartsKing
 
 Omni-source part search that caches supplier listings locally. Enter a part number once, and PartsKing
-collects Amazon/eBay/Digi-Key/Mouser listings (via SerpAPI), scores them with a Levenshtein-based confidence
-check, and stores the results in a SQLite cache. Subsequent searches hit the cache first, so you get near-zero
+collects Amazon/eBay/Digi-Key/Mouser listings plus the supplier domains you specified via a Scrapling crawler, scores them with a Levenshtein-based confidence check, and stores the results in SQLite so repeat lookups are instant. Subsequent searches hit the cache first, so you get near-zero
 latency and a fallback when live lookups fail.
 
 ## Requirements
 - Node.js 18+
 - pnpm 9+
 - Python 3.14+ (only if you want to run Scrapling/Python-based enrichments later)
-- SerpAPI key (set `SERPAPI_KEY` in `.env.local`)
 
 ## Project layout
 ```
@@ -27,21 +25,25 @@ parts-king/
 
 ```bash
 cd parts-king
-cp .env.example .env.local   # add SERPAPI_KEY=...
+cp .env.example .env.local
 pnpm install
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
 Update `.env.local` as needed:
 
 ```
-SERPAPI_KEY=your_key
 PARTSKING_DB_PATH=./data/parts.db          # optional override
 PARTSKING_CACHE_TTL_HOURS=24               # adjust cache freshness window
+PARTSKING_PYTHON_BIN=python3               # or path to your venv python
+PARTSKING_SCRAPER_LIMIT=5                  # max results per source (optional)
 ```
 
 ### Pre-populate the cache
 ```bash
-pnpm scrape:seed    # reads data/seed_parts.json and writes to data/parts.db
+pnpm scrape:seed    # uses the Scrapling runner for each SKU in data/seed_parts.json
 ```
 
 ### Run everything locally
@@ -60,9 +62,9 @@ pnpm preview    # serves built React bundle for inspection
 
 ## Data refresh strategy
 - The API returns cached results first (entries fresher than `PARTSKING_CACHE_TTL_HOURS`, default 24h).
-- When a cache miss occurs and `SERPAPI_KEY` is configured, the API fetches fresh listings, stores them in
-  SQLite, and returns the filtered list.
-- You can periodically re-run `pnpm scrape:seed` (e.g., cron) to refresh known SKUs offline.
+- On a cache miss, the Node server spawns the Scrapling runner (`python -m scraper.runner --part ... --write`),
+  waits for it to populate SQLite, then serves the filtered results.
+- You can periodically re-run `pnpm scrape:seed` (or call the runner directly) to warm specific SKUs.
 - Use `pnpm prune:cache [hours]` to delete rows older than your retention window.
 
 ## Simple AI / scoring

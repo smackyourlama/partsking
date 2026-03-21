@@ -2,12 +2,11 @@ import 'dotenv/config'
 import express from 'express'
 import type { Request, Response } from 'express'
 import { z } from 'zod'
-import { listCachedParts, readCachedResults, writeCachedResults } from './cacheStore.js'
-import { runMarketplaceSearches } from './searchService.js'
+import { listCachedParts, readCachedResults } from './cacheStore.js'
+import { runScraper } from './searchService.js'
 
 const app = express()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000
-const hasSerpApiKey = Boolean(process.env.SERPAPI_KEY)
 const CACHE_TTL_HOURS = Number(process.env.PARTSKING_CACHE_TTL_HOURS || 24)
 
 const querySchema = z.object({
@@ -18,10 +17,6 @@ const querySchema = z.object({
     .transform((value) => (value ? Number(value) : 0))
     .pipe(z.number().min(0).max(1)),
 })
-
-if (!hasSerpApiKey) {
-  console.warn('[server] SERPAPI_KEY is not set. Live marketplace queries will be unavailable until configured.')
-}
 
 app.get('/api/parts', async (req: Request, res: Response) => {
   const parseResult = querySchema.safeParse(req.query)
@@ -43,14 +38,13 @@ app.get('/api/parts', async (req: Request, res: Response) => {
       })
     }
 
-    if (!hasSerpApiKey) {
-      return res.status(503).json({ error: 'No fresh data available (SERPAPI_KEY missing).' })
+    await runScraper(partNumber)
+    const refreshed = await readCachedResults(partNumber, CACHE_TTL_HOURS)
+    if (!refreshed) {
+      throw new Error('Scraper returned no rows')
     }
-
-    const liveResults = await runMarketplaceSearches(partNumber)
-    await writeCachedResults(partNumber, liveResults)
-    const filtered = liveResults.filter((item) => item.confidence >= minConfidence)
-    res.json({ partNumber, results: filtered, source: 'live', cachedAt: new Date().toISOString() })
+    const filtered = refreshed.results.filter((item) => item.confidence >= minConfidence)
+    res.json({ partNumber, results: filtered, source: 'live', cachedAt: refreshed.scrapedAt })
   } catch (error) {
     console.error('[part-search] error', error)
     res.status(500).json({ error: 'Unable to fetch part data right now.' })

@@ -1,39 +1,34 @@
-import { runMarketplaceSearches } from '../server/searchService'
-import { writeCachedResults } from '../server/cacheStore'
-import { readFile } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
 import path from 'node:path'
 
-async function main() {
-  const seedPath = path.resolve(process.cwd(), 'data/seed_parts.json')
-  const raw = await readFile(seedPath, 'utf-8').catch((error) => {
-    throw new Error(`Unable to read seed file at ${seedPath}: ${error.message}`)
-  })
-
-  const partNumbers: string[] = JSON.parse(raw)
-  if (!Array.isArray(partNumbers) || partNumbers.length === 0) {
-    throw new Error('Seed file must be a non-empty JSON array of part numbers.')
-  }
-
-  const summary: { partNumber: string; count: number }[] = []
-
-  for (const partNumber of partNumbers) {
-    const trimmed = partNumber.trim()
-    if (!trimmed) continue
-
-    console.log(`→ Fetching listings for ${trimmed}...`)
-    const results = await runMarketplaceSearches(trimmed)
-    summary.push({ partNumber: trimmed, count: results.length })
-    await writeCachedResults(trimmed, results)
-    console.log(`   Saved ${results.length} rows to the local database.`)
-  }
-
-  console.log('\nScrape complete:')
-  summary.forEach((entry) => {
-    console.log(` - ${entry.partNumber}: ${entry.count} cached results`)
-  })
+const seedsPath = path.resolve(process.cwd(), 'data/seed_parts.json')
+if (!fs.existsSync(seedsPath)) {
+  console.error('Seed file not found at data/seed_parts.json')
+  process.exit(1)
 }
 
-main().catch((error) => {
-  console.error('[cacheParts] failed:', error)
+const raw = fs.readFileSync(seedsPath, 'utf8')
+const parts = JSON.parse(raw) as string[]
+if (!Array.isArray(parts) || parts.length === 0) {
+  console.error('Seed file must be a non-empty JSON array')
   process.exit(1)
+}
+
+const pythonBin = process.env.PARTSKING_PYTHON_BIN || 'python3'
+const scraperModule = process.env.PARTSKING_SCRAPER_MODULE || 'scraper.runner'
+const limit = process.env.PARTSKING_SCRAPER_LIMIT
+
+parts.forEach((part) => {
+  const trimmed = String(part).trim()
+  if (!trimmed) return
+  const args = ['-m', scraperModule, '--part', trimmed, '--write']
+  if (limit) args.push('--limit', limit)
+  console.log(`→ warming cache for ${trimmed}`)
+  const result = spawnSync(pythonBin, args, { stdio: 'inherit', cwd: process.cwd() })
+  if (result.status !== 0) {
+    console.error(`  ! scraper failed for ${trimmed}`)
+  }
 })
+
+console.log('Seed warm-up complete.')
