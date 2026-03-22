@@ -9,6 +9,7 @@ PLATFORM_WOOCOMMERCE = "woocommerce"
 PLATFORM_SHIFT4SHOP = "shift4shop"
 PLATFORM_REPAIRCLINIC = "repairclinic"
 PLATFORM_JACKS = "jacks"
+PLATFORM_SERPAPI = "serpapi"
 
 SOURCES: List[SourceConfig] = [
   SourceConfig(
@@ -91,5 +92,29 @@ SOURCES: List[SourceConfig] = [
     domain="stems.com",
     search_template="https://www.stems.com/search?q={query}",
     parser=PLATFORM_SHOPIFY,
+  ),
+  SourceConfig(
+    slug="arrow",
+    label="Arrow Electronics",
+    domain="arrow.com",
+    search_template="https://www.arrow.com/en/products/search?q={query}",
+    parser=PLATFORM_SERPAPI,
+    notes="SerpAPI-backed search (Google organic results).",
+  ),
+  SourceConfig(
+    slug="newark",
+    label="Newark",
+    domain="newark.com",
+    search_template="https://www.newark.com/search?st={query}",
+    parser=PLATFORM_SERPAPI,
+    notes="SerpAPI-backed search (Google organic results).",
+  ),
+  SourceConfig(
+    slug="octopart",
+    label="Octopart",
+    domain="octopart.com",
+    search_template="https://octopart.com/search?q={query}",
+    parser=PLATFORM_SERPAPI,
+    notes="SerpAPI-backed search (Google organic results).",
   ),
 ]

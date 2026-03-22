@@ -1,10 +1,16 @@
+import 'dotenv/config'
 import { defineConfig } from 'drizzle-kit'
+
+const connectionString = process.env.SUPABASE_MIGRATION_URL
+if (!connectionString) {
+  throw new Error('Missing SUPABASE_MIGRATION_URL env var for Drizzle migrations')
+}
 
 export default defineConfig({
   schema: './server/schema.ts',
   out: './drizzle',
-  dialect: 'sqlite',
+  dialect: 'postgresql',
   dbCredentials: {
-    url: './data/parts.db',
+    url: connectionString,
   },
 })

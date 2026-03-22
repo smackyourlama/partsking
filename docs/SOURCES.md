@@ -26,8 +26,8 @@ stealth fetcher (or the upcoming Docker build with `curl_cffi`) before we can ru
 - **Direct scrapers:** Python modules under `scraper/` will use Scrapling’s parser + fetchers to gather full
   pricing, availability, and breadcrumb metadata from each site. We’ll switch the ingestion pipeline over once
   the stealth fetcher dependency (`curl_cffi`) is resolved or Dockerized.
-- **Data retention:** regardless of source, normalized listings are stored in `data/parts.db` with fields
-  `{part_number, source, title, url, price, in_stock, confidence, fetched_at}` for fast recall.
+- **Data retention:** normalized listings write into Supabase (`parts`, `part_listings`) in production; the SQLite fallback
+  (`data/parts.db`) mirrors the same schema for local dev. Fields: `{part_number, source, title, url, price, in_stock, confidence, scraped_at}`.
 
 Add additional suppliers by appending to this table **and** registering the domain in
 `server/searchService.ts#SITE_SCOPED_SOURCES` so both SerpAPI and the future scrapers stay in sync.

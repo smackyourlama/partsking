@@ -2,12 +2,14 @@ import 'dotenv/config'
 import express from 'express'
 import type { Request, Response } from 'express'
 import { z } from 'zod'
-import { listCachedParts, readCachedResults } from './cacheStore.js'
+import { listCachedParts, readCachedResults, writeCachedResults } from './cacheStore.js'
 import { runScraper } from './searchService.js'
 
 const app = express()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000
 const CACHE_TTL_HOURS = Number(process.env.PARTSKING_CACHE_TTL_HOURS || 24)
+
+app.use(express.json())
 
 const querySchema = z.object({
   partNumber: z.string().trim().min(3, 'Please enter at least 3 characters.'),
@@ -38,7 +40,8 @@ app.get('/api/parts', async (req: Request, res: Response) => {
       })
     }
 
-    await runScraper(partNumber)
+    const freshResults = await runScraper(partNumber)
+    await writeCachedResults(partNumber, freshResults)
     const refreshed = await readCachedResults(partNumber, CACHE_TTL_HOURS)
     if (!refreshed) {
       throw new Error('Scraper returned no rows')
@@ -51,10 +54,33 @@ app.get('/api/parts', async (req: Request, res: Response) => {
   }
 })
 
-app.get('/api/cache', async (_: Request, res: Response) => {
+app.get('/api/cache', async (req: Request, res: Response) => {
   try {
+    const rawLimit = req.query.limit
+    const limitParam = Array.isArray(rawLimit) ? rawLimit[0] : typeof rawLimit === 'string' ? rawLimit : undefined
+    const limitValue = limitParam ? Number(limitParam) : undefined
+    const normalizedLimit =
+      typeof limitValue === 'number' && Number.isFinite(limitValue) && limitValue > 0 ? limitValue : undefined
+
     const parts = await listCachedParts()
-    res.json({ parts })
+    const maxFreshMinutes = CACHE_TTL_HOURS * 60
+    const withMeta = parts.map((entry) => {
+      const timestamp = entry.cachedAt ? Date.parse(entry.cachedAt) : Number.NaN
+      const ageMinutes = Number.isFinite(timestamp)
+        ? Math.max(0, Math.floor((Date.now() - timestamp) / 60000))
+        : null
+      const isStale = ageMinutes === null ? true : ageMinutes > maxFreshMinutes
+      return {
+        partNumber: entry.partNumber,
+        cachedAt: entry.cachedAt,
+        ageMinutes,
+        isStale,
+        status: isStale ? 'stale' : 'fresh',
+      }
+    })
+
+    const payload = typeof normalizedLimit === 'number' ? withMeta.slice(0, normalizedLimit) : withMeta
+    res.json({ parts: payload, ttlHours: CACHE_TTL_HOURS })
   } catch (error) {
     console.error('[cache:list] error', error)
     res.status(500).json({ error: 'Unable to list cache entries right now.' })
@@ -79,6 +105,31 @@ app.get('/api/cache/:partNumber', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('[cache:fetch] error', error)
     res.status(500).json({ error: 'Unable to read cache entry right now.' })
+  }
+})
+
+app.post('/api/cache/:partNumber/refresh', async (req: Request, res: Response) => {
+  try {
+    const partParam = req.params.partNumber
+    const normalizedPart = Array.isArray(partParam) ? partParam[0] : partParam
+    const trimmedPart = normalizedPart?.trim()
+    if (!trimmedPart) {
+      return res.status(400).json({ error: 'Missing part number in path.' })
+    }
+
+    const freshResults = await runScraper(trimmedPart)
+    await writeCachedResults(trimmedPart, freshResults)
+    const refreshed = await readCachedResults(trimmedPart, CACHE_TTL_HOURS)
+
+    res.json({
+      partNumber: trimmedPart,
+      results: refreshed?.results ?? freshResults,
+      cachedAt: refreshed?.scrapedAt ?? new Date().toISOString(),
+      source: 'live',
+    })
+  } catch (error) {
+    console.error('[cache:refresh] error', error)
+    res.status(500).json({ error: 'Unable to refresh cache entry right now.' })
   }
 })
 

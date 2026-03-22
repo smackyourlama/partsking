@@ -1,4 +1,4 @@
-import { pruneListings } from '../server/db'
+import { pruneListings } from '../server/db.js'
 
 const hours = process.argv[2] ? Number(process.argv[2]) : 24
 if (Number.isNaN(hours) || hours <= 0) {
@@ -6,5 +6,9 @@ if (Number.isNaN(hours) || hours <= 0) {
   process.exit(1)
 }
 
-pruneListings(hours)
-console.log(`Deleted cached rows older than ${hours} hours.`)
+async function main() {
+  await pruneListings(hours)
+  console.log(`Deleted cached rows older than ${hours} hours.`)
+}
+
+void main()

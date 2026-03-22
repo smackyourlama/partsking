@@ -1,6 +1,6 @@
 # PartsKing – Requirements Backlog
 
-_Last updated: 2026-03-20_
+_Last updated: 2026-03-21_
 
 ## Requested features
 - Web app where a user enters a part number and the system searches:
@@ -15,9 +15,13 @@ _Last updated: 2026-03-20_
   - The website queries this local database rather than live-scraping every request.
   - Provide a way to run periodic refresh jobs that re-scrape sources and update the stored data.
 
-## Open questions
-- Preferred database (SQLite, Postgres, etc.)?
-- Final list of supplier domains beyond Amazon/eBay?
-- How often should the refresh job run, and should it be automated (cron) or manual?
+## Decisions (2026-03-21)
+- **Cache storage:** Supabase Postgres is canonical (anon key for the UI, service-role key for scrapers); SQLite only powers offline dev.
+- **Cache freshness:** API honors `PARTSKING_CACHE_TTL_HOURS` (24h) while the background job uses `PARTSKING_REFRESH_TTL` (6h) to rehydrate stale SKUs.
+- **Automation:** `.github/workflows/cache-refresh.yml` runs `pnpm scrape:refresh` every 6 hours; Mission Control can adopt the same script later if we need on-prem orchestration.
 
-_(Nicco asked to park this for later; revisit when it’s time to implement.)_
+## Open questions
+- Final list of supplier domains beyond Amazon/eBay (Nicco to prioritize).
+- Do we need price dedupe by quantity/currency before surfacing results?
+
+_(Nicco asked to park supplier expansion until the current feature set is validated.)_

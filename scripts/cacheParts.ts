@@ -1,6 +1,7 @@
-import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
+import { writeCachedResults } from '../server/cacheStore.js'
+import { runScraper } from '../server/searchService.js'
 
 const seedsPath = path.resolve(process.cwd(), 'data/seed_parts.json')
 if (!fs.existsSync(seedsPath)) {
@@ -15,20 +16,24 @@ if (!Array.isArray(parts) || parts.length === 0) {
   process.exit(1)
 }
 
-const pythonBin = process.env.PARTSKING_PYTHON_BIN || 'python3'
-const scraperModule = process.env.PARTSKING_SCRAPER_MODULE || 'scraper.runner'
-const limit = process.env.PARTSKING_SCRAPER_LIMIT
-
-parts.forEach((part) => {
-  const trimmed = String(part).trim()
+async function cachePart(partNumber: string) {
+  const trimmed = partNumber.trim()
   if (!trimmed) return
-  const args = ['-m', scraperModule, '--part', trimmed, '--write']
-  if (limit) args.push('--limit', limit)
   console.log(`→ warming cache for ${trimmed}`)
-  const result = spawnSync(pythonBin, args, { stdio: 'inherit', cwd: process.cwd() })
-  if (result.status !== 0) {
-    console.error(`  ! scraper failed for ${trimmed}`)
+  try {
+    const results = await runScraper(trimmed)
+    await writeCachedResults(trimmed, results)
+    console.log(`  ✓ stored ${results.length} listings`)
+  } catch (error) {
+    console.error(`  ! scraper failed for ${trimmed}:`, error)
   }
-})
+}
 
-console.log('Seed warm-up complete.')
+async function main() {
+  for (const part of parts) {
+    await cachePart(String(part))
+  }
+  console.log('Seed warm-up complete.')
+}
+
+void main()

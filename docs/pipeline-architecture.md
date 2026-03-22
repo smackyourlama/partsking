@@ -10,8 +10,8 @@
 
 ## Proposed stack
 - **Runtime:** Node.js + TypeScript (shared with existing server).
-- **Storage:** SQLite (file-backed, easy to ship with repo; upgradeable to Postgres later).
-- **ORM/Query builder:** Drizzle ORM for typed SQL + migrations.
+- **Storage:** Supabase Postgres (anon read for the static UI, service-role writes for the scraper; local SQLite fallback for offline dev).
+- **ORM/Query builder:** Drizzle ORM for typed SQL + migrations (emits SQL applied via Supabase).
 - **Queueing:** In-process task runner for now; can swap to Mission Control jobs when scale increases.
 
 ## Data model
@@ -42,12 +42,25 @@ CREATE UNIQUE INDEX idx_part_source_url
 3. Emit summary metrics (records upserted, suppliers failed, API quota usage).
 4. Optionally trim stale rows (`DELETE WHERE scraped_at < now() - interval '30 days'`).
 
+## Incremental refresh driver (implemented)
+- `scripts/refreshCache.ts` now powers `pnpm scrape:refresh`, which:
+  - Reads the seed list (`data/seed_parts.json`) or falls back to whatever SKUs already exist in Supabase/SQLite.
+  - Checks each SKU against the configured TTL (`PARTSKING_REFRESH_TTL`, default 6h) via `readCachedResults`.
+  - Re-runs the Scrapling runner only for stale or missing SKUs (dry-run mode supported for diagnostics).
+- Mission Control or cron can trigger this script hourly/overnight; set `PARTSKING_REFRESH_LIMIT` to cap batch size when API quotas are tight.
+
+## Refresh cadence & hosting
+- **API cache TTL:** `PARTSKING_CACHE_TTL_HOURS` (24h) controls how long `/api/parts` trusts a cached snapshot before re-running the scraper for end-user queries.
+- **Refresh job TTL:** `PARTSKING_REFRESH_TTL` (6h) governs when `pnpm scrape:refresh` re-hydrates a SKU proactively.
+- **Hosting plan:** `.github/workflows/cache-refresh.yml` runs the refresh script every 6 hours on `ubuntu-latest`, installing Node + Python deps and writing directly into Supabase using the service-role key.
+- **Customization:** Override cadence by editing the cron string or triggering `workflow_dispatch` with `ttl_hours` / `limit` overrides. If you migrate to Mission Control later, reuse the same script + env bundle.
+
 ## Integration points
-- Expose `/api/cache/:partNumber` endpoint so the UI can read from SQLite when offline or rate-limited.
-- Add Mission Control job template: `pnpm scrape --seed-file data/parts_seed.json`.
-- Document env vars (`DATABASE_URL`, `SERPAPI_KEY`, etc.) in README.
+- `/api/cache` now surfaces `{ partNumber, cachedAt }` objects so the UI can display recency labels instead of opaque strings.
+- `/api/cache/:partNumber` doubles as a fallback endpoint for the UI and any CLI automation that needs cached data without rerunning the scraper.
+- Mission Control template: `pnpm scrape:refresh` with the same env bundle used in GitHub Actions (drop into Mission Control when background workers are ready).
+- README documents the Supabase + cache env vars; Mission Control only needs the service-role key and Python binary path.
 
 ## Open questions
 - Finalize supplier list for v1.
-- Define cadence for incremental refresh (cron schedule?).
 - Decide whether to dedupe prices by currency/quantity.

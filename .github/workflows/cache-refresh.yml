@@ -1,0 +1,73 @@
+name: Refresh cached listings
+
+on:
+  schedule:
+    - cron: '15 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      ttl_hours:
+        description: 'Override TTL window (hours)'
+        required: false
+      limit:
+        description: 'Optional cap on part count'
+        required: false
+
+jobs:
+  refresh:
+    if: ${{ github.event_name != 'schedule' || github.repository_owner == 'Nicco' }}
+    runs-on: ubuntu-latest
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+      SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+      SUPABASE_MIGRATION_URL: ${{ secrets.SUPABASE_MIGRATION_URL }}
+      PARTSKING_PYTHON_BIN: python3
+      PARTSKING_CACHE_TTL_HOURS: ${{ vars.PARTSKING_CACHE_TTL_HOURS || 24 }}
+      PARTSKING_REFRESH_TTL: ${{ vars.PARTSKING_REFRESH_TTL || 6 }}
+      PARTSKING_REFRESH_LIMIT: ${{ vars.PARTSKING_REFRESH_LIMIT || '' }}
+      PARTSKING_REFRESH_LIST: ${{ vars.PARTSKING_REFRESH_LIST || 'data/seed_parts.json' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: 'pnpm'
+
+      - name: Install Node deps
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install scraper deps
+        run: pip install -r requirements.txt
+
+      - name: Refresh cache (scheduled/default)
+        if: github.event_name != 'workflow_dispatch'
+        run: pnpm scrape:refresh
+
+      - name: Refresh cache (manual override)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          ARGS=()
+          if [[ -n "${{ github.event.inputs.ttl_hours }}" ]]; then
+            ARGS+=(--ttl "${{ github.event.inputs.ttl_hours }}")
+          fi
+          if [[ -n "${{ github.event.inputs.limit }}" ]]; then
+            ARGS+=(--limit "${{ github.event.inputs.limit }}")
+          fi
+          if [ ${#ARGS[@]} -eq 0 ]; then
+            pnpm scrape:refresh
+          else
+            pnpm scrape:refresh "${ARGS[@]}"
+          fi
