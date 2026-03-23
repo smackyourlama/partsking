@@ -8,7 +8,7 @@
     "dev:full": "concurrently \"pnpm api:dev\" \"pnpm dev\"",
     "api:dev": "tsx watch server/index.ts",
     "api:start": "node ./dist/server/index.js",
-    "build": "tsc -b tsconfig.app.json tsconfig.node.json tsconfig.server.json && vite build",
+    "build": "tsc -b tsconfig.app.json tsconfig.node.json && tsc --project tsconfig.server.json && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate:pg",
@@ -20,6 +20,7 @@
   "dependencies": {
     "@supabase/supabase-js": "^2.47.0",
     "better-sqlite3": "^12.8.0",
+    "cors": "^2.8.6",
     "dotenv": "^17.3.1",
     "drizzle-kit": "^0.31.10",
     "drizzle-orm": "^0.45.1",
@@ -31,6 +32,7 @@
   "devDependencies": {
     "@eslint/js": "^9.39.4",
     "@types/better-sqlite3": "^7.6.13",
+    "@types/cors": "^2.8.19",
     "@types/express": "^5.0.6",
     "@types/node": "^24.12.0",
     "@types/react": "^19.2.14",
@@ -41,6 +43,7 @@
     "eslint-plugin-react-hooks": "^7.0.1",
     "eslint-plugin-react-refresh": "^0.5.2",
     "globals": "^17.4.0",
+    "pg": "^8.20.0",
     "tsx": "^4.21.0",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.0",

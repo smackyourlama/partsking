@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
 import type { SearchResult } from './types'
 import './App.css'
+import { getSupabaseClient } from './lib/supabaseClient'
 
 const confidenceBands = [
   { label: 'Lenient (0.4+)', value: 0.4 },
@@ -8,15 +9,25 @@ const confidenceBands = [
   { label: 'Strict (0.8+)', value: 0.8 },
 ]
 
-const apiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').replace(/\/$/, '')
+const rawApiBaseUrl = (import.meta.env.VITE_API_BASE_URL ?? '').trim().replace(/\/$/, '')
 const buildApiUrl = (path: string, searchParams?: URLSearchParams) => {
   const query = searchParams ? `?${searchParams.toString()}` : ''
-  return `${apiBaseUrl}${path}${query}`
+  if (rawApiBaseUrl) {
+    return `${rawApiBaseUrl}${path}${query}`
+  }
+  return `${path}${query}`
 }
+const apiBackendAvailable = Boolean(rawApiBaseUrl || import.meta.env.DEV)
 
 const CACHE_LIST_LIMIT = 25
 const DEFAULT_CACHE_TTL_HOURS = 24
 const MAX_BULK_REFRESH = 3
+
+const supabaseClient = getSupabaseClient()
+const supabaseReadsEnabled = Boolean(supabaseClient)
+const preferSupabaseReads = !apiBackendAvailable && supabaseReadsEnabled
+const configuredTtl = Number.parseFloat(import.meta.env.VITE_CACHE_TTL_HOURS ?? '')
+const SUPABASE_CACHE_TTL_HOURS = Number.isFinite(configuredTtl) && configuredTtl > 0 ? configuredTtl : DEFAULT_CACHE_TTL_HOURS
 
 type ResultOrigin = 'live' | 'cache' | null
 
@@ -28,7 +39,8 @@ type ApiResponse = {
 
 type CachedResult = {
   results: SearchResult[]
-  cachedAt?: string
+  cachedAt?: string | null
+  isStale?: boolean
 }
 
 type CacheEntryWire =
@@ -129,6 +141,131 @@ const describeCacheAge = (value?: string | null) => {
   return `${days}d ago`
 }
 
+const SUPABASE_TTL_MS = SUPABASE_CACHE_TTL_HOURS * 60 * 60 * 1000
+
+type SupabaseCacheRow = {
+  part_number: string | null
+  last_cached_at: string | null
+}
+
+type SupabaseListingRow = {
+  payload: SearchResult | null
+  scraped_at: string | null
+}
+
+const timestampFromIso = (value: string | null) => {
+  if (!value) return Number.NaN
+  const parsed = Date.parse(value)
+  return Number.isNaN(parsed) ? Number.NaN : parsed
+}
+
+const computeIsStale = (cachedAt: string | null) => {
+  if (!cachedAt) return true
+  const ts = timestampFromIso(cachedAt)
+  if (!Number.isFinite(ts)) return true
+  return Date.now() - ts > SUPABASE_TTL_MS
+}
+
+const normalizePartNumber = (value: string) => value.trim()
+
+const fetchSupabaseCacheSummary = async (limit: number) => {
+  if (!supabaseClient) {
+    return { parts: [] as CachedPartSummary[], ttlHours: SUPABASE_CACHE_TTL_HOURS }
+  }
+
+  const { data, error } = await supabaseClient
+    .from('parts')
+    .select('part_number,last_cached_at')
+    .order('last_cached_at', { ascending: false, nullsFirst: false })
+    .order('part_number', { ascending: true })
+    .limit(limit)
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  const normalized = (data ?? [])
+    .map((row: SupabaseCacheRow) => {
+      const partNumber = row.part_number ? row.part_number.trim() : null
+      if (!partNumber) return null
+      const cachedAt = row.last_cached_at ?? null
+      const isStale = computeIsStale(cachedAt)
+      const ageMinutes = deriveAgeMinutes(null, cachedAt)
+      const status: CachedPartSummary['status'] = cachedAt ? (isStale ? 'stale' : 'fresh') : 'unknown'
+      return { partNumber, cachedAt, ageMinutes, isStale, status }
+    })
+    .filter(Boolean) as CachedPartSummary[]
+
+  return { parts: normalized, ttlHours: SUPABASE_CACHE_TTL_HOURS }
+}
+
+const fetchSupabaseListings = async (partNumber: string) => {
+  if (!supabaseClient) return []
+  const normalized = normalizePartNumber(partNumber)
+  if (!normalized) return []
+  const { data, error } = await supabaseClient
+    .from('part_latest')
+    .select('payload, scraped_at')
+    .eq('part_number', normalized)
+    .order('scraped_at', { ascending: false })
+
+  if (error) {
+    throw new Error(error.message)
+  }
+
+  return (data ?? []) as SupabaseListingRow[]
+}
+
+const selectRowsWithTtl = (rows: SupabaseListingRow[]) => {
+  if (rows.length === 0) {
+    return { selected: rows, isStale: true }
+  }
+
+  const freshRows = rows.filter((row) => {
+    const ts = timestampFromIso(row.scraped_at)
+    return Number.isFinite(ts) && Date.now() - ts <= SUPABASE_TTL_MS
+  })
+
+  if (freshRows.length > 0) {
+    return { selected: freshRows, isStale: false }
+  }
+
+  return { selected: rows, isStale: true }
+}
+
+const fetchSupabaseSearchResults = async (partNumber: string, minConfidence: number) => {
+  if (!supabaseClient) return null
+  const rows = await fetchSupabaseListings(partNumber)
+  if (rows.length === 0) return null
+
+  const { selected, isStale } = selectRowsWithTtl(rows)
+  const filteredResults = selected
+    .map((row) => row.payload)
+    .filter((entry): entry is SearchResult => Boolean(entry && typeof entry.confidence === 'number' && entry.confidence >= minConfidence))
+
+  return {
+    results: filteredResults,
+    cachedAt: selected[0]?.scraped_at ?? null,
+    isStale,
+  }
+}
+
+const fetchSupabaseCacheEntry = async (partNumber: string) => {
+  if (!supabaseClient) return null
+  const rows = await fetchSupabaseListings(partNumber)
+  if (rows.length === 0) return null
+  const { selected, isStale } = selectRowsWithTtl(rows)
+  const mapped = selected
+    .map((row) => row.payload)
+    .filter((entry): entry is SearchResult => Boolean(entry))
+
+  return {
+    results: mapped,
+    cachedAt: selected[0]?.scraped_at ?? null,
+    isStale,
+  }
+}
+
 function App() {
   const [partNumber, setPartNumber] = useState('')
   const [minConfidence, setMinConfidence] = useState(0.6)
@@ -143,8 +280,26 @@ function App() {
   const [bulkRefreshing, setBulkRefreshing] = useState(false)
 
   const loadCachedResults = useCallback(async (value: string): Promise<CachedResult | null> => {
+    const trimmed = value.trim()
+    if (!trimmed) return null
+
+    if (supabaseReadsEnabled) {
+      try {
+        const snapshot = await fetchSupabaseCacheEntry(trimmed)
+        if (snapshot) {
+          return snapshot
+        }
+      } catch (error) {
+        console.warn('[cache-fallback] supabase cache lookup failed', error)
+      }
+    }
+
+    if (!apiBackendAvailable) {
+      return null
+    }
+
     try {
-      const response = await fetch(buildApiUrl(`/api/cache/${encodeURIComponent(value)}`))
+      const response = await fetch(buildApiUrl(`/api/cache/${encodeURIComponent(trimmed)}`))
       if (!response.ok) return null
       const data = (await response.json()) as CachedResult
       return data
@@ -155,6 +310,19 @@ function App() {
   }, [])
 
   const reloadCacheList = useCallback(async () => {
+    if (preferSupabaseReads) {
+      try {
+        const data = await fetchSupabaseCacheSummary(CACHE_LIST_LIMIT)
+        setCachedParts(normalizeCachedParts(data.parts))
+        setCacheTtlHours(data.ttlHours)
+        return
+      } catch (error) {
+        console.warn('[cache-list] supabase summary failed', error)
+      }
+    }
+
+    if (!apiBackendAvailable) return
+
     try {
       const params = new URLSearchParams({ limit: CACHE_LIST_LIMIT.toString() })
       const response = await fetch(buildApiUrl('/api/cache', params))
@@ -196,6 +364,21 @@ function App() {
       setResultOrigin(null)
       setCachedAt(null)
 
+      if (preferSupabaseReads) {
+        const supaData = await fetchSupabaseSearchResults(trimmedPart, minConfidence)
+        if (!supaData) {
+          throw new Error('No cached snapshot exists for that part yet. Run a refresh from a trusted device to populate it.')
+        }
+
+        setResults(supaData.results)
+        setResultOrigin(supaData.isStale ? 'cache' : 'live')
+        setCachedAt(supaData.cachedAt ?? null)
+        if (supaData.results.length === 0) {
+          setError('The cache is empty for this part. Trigger a refresh to source new listings.')
+        }
+        return
+      }
+
       const params = new URLSearchParams({
         partNumber: trimmedPart,
         minConfidence: minConfidence.toString(),
@@ -210,7 +393,12 @@ function App() {
       setResultOrigin(data.source ?? 'live')
       setCachedAt(data.cachedAt ?? null)
     } catch (err) {
-      const friendly = err instanceof Error ? err.message : 'Unexpected error occurred.'
+      const friendly = (() => {
+        if (err instanceof TypeError && /Failed to fetch/i.test(err.message)) {
+          return 'Unable to reach the API. Make sure `pnpm api:dev` (or `pnpm dev:full`) is running.'
+        }
+        return err instanceof Error ? err.message : 'Unexpected error occurred.'
+      })()
       const cachedResults = await loadCachedResults(trimmedPart)
 
       if (cachedResults) {
@@ -296,6 +484,10 @@ function App() {
     async (value: string) => {
       const trimmed = value.trim()
       if (!trimmed) return
+      if (!apiBackendAvailable) {
+        setError('Refresh queue is only available when the API backend is running.')
+        return
+      }
       const normalizedKey = trimmed.toLowerCase()
       setError(null)
       setRefreshingPart(normalizedKey)
@@ -337,6 +529,10 @@ function App() {
   )
 
   const refreshStaleParts = useCallback(async () => {
+    if (!apiBackendAvailable) {
+      setError('Cannot bulk refresh without the API backend running.')
+      return
+    }
     const staleTargets = cachedParts.filter((entry) => entry.isStale).slice(0, MAX_BULK_REFRESH)
     if (!staleTargets.length) return
     setBulkRefreshing(true)
@@ -452,6 +648,12 @@ function App() {
                 </div>
               )}
 
+              {preferSupabaseReads && (
+                <p className="muted warning">
+                  Read-only cache mode: live refresh endpoints are disabled on this static build.
+                </p>
+              )}
+
               <button type="submit" disabled={isLoading} className="btn btn-primary">
                 {isLoading ? 'Searching…' : 'Search suppliers'}
               </button>
@@ -531,7 +733,8 @@ function App() {
                 type="button"
                 className="btn btn-secondary"
                 onClick={refreshStaleParts}
-                disabled={staleCount === 0 || bulkRefreshing}
+                disabled={!apiBackendAvailable || staleCount === 0 || bulkRefreshing}
+                title={apiBackendAvailable ? undefined : 'API backend must be running to queue refresh jobs.'}
               >
                 {bulkRefreshing ? 'Refreshing…' : staleCount === 0 ? 'All fresh' : `Refresh stale (${actionableStale})`}
               </button>
@@ -560,7 +763,8 @@ function App() {
                       type="button"
                       className="btn btn-link"
                       onClick={() => refreshPart(entry.partNumber)}
-                      disabled={refreshingPart === entry.partNumber.toLowerCase() || bulkRefreshing}
+                      disabled={!apiBackendAvailable || refreshingPart === entry.partNumber.toLowerCase() || bulkRefreshing}
+                      title={apiBackendAvailable ? undefined : 'API backend must be running to refresh cache entries.'}
                     >
                       {refreshingPart === entry.partNumber.toLowerCase() ? 'Refreshing…' : 'Refresh now'}
                     </button>
@@ -571,30 +775,6 @@ function App() {
           )}
         </section>
 
-        <section className="section glass" id="workflow">
-          <h2>How the PartsKing workflow runs</h2>
-          <p className="lead">
-            Built with the same design language as the Hack&Haul project—hero layout, glass panels, gradients—so it
-            feels like a polished 21st-inspired property tech site instead of a raw admin page.
-          </p>
-          <div className="grid-3">
-            <div className="card">
-              <div className="feature-icon">01</div>
-              <h3>Search + cache</h3>
-              <p className="muted">The Scrapling runner fetches the dealers you listed, then results sync into Supabase.</p>
-            </div>
-            <div className="card">
-              <div className="feature-icon">02</div>
-              <h3>Confidence gate</h3>
-              <p className="muted">Use the chip selector to require 40/60/80% normalized similarity.</p>
-            </div>
-            <div className="card">
-              <div className="feature-icon">03</div>
-              <h3>Export-ready</h3>
-              <p className="muted">Each card links to the supplier listing so you can verify and drop it into your pipeline.</p>
-            </div>
-          </div>
-        </section>
       </main>
 
       <footer className="footer glass">

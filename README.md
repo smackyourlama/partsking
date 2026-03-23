@@ -19,7 +19,7 @@ parts-king/
 ├── data/
 │   ├── parts.db        # Optional SQLite fallback cache (local dev)
 │   └── seed_parts.json # initial part numbers to warm the cache
-└── .env.local          # local env vars (Supabase, SERPAPI_KEY, Python paths)
+└── .env.local          # local env vars (Supabase + Python paths)
 ```
 
 ## Setup
@@ -49,6 +49,8 @@ SUPABASE_URL=https://<project>.supabase.co
 SUPABASE_ANON_KEY=your_public_anon_key
 SUPABASE_SERVICE_ROLE_KEY=your_service_role_key
 SUPABASE_MIGRATION_URL=postgresql://postgres:<db-password>@db.<project>.supabase.co:6543/postgres
+SUPABASE_POOLER_HOST=aws-0-<region>.pooler.supabase.com  # optional IPv4 override
+SUPABASE_POOLER_PORT=6543                               # optional (defaults to 6543)
 
 # Frontend (Vite) — optional overrides
 VITE_API_BASE_URL=https://parts.king-api.com   # leave blank for same-origin API in dev
@@ -60,6 +62,8 @@ VITE_BASE_PATH=./                              # keep ./ for GitHub Pages to ser
 2. Export it as `SUPABASE_MIGRATION_URL` in `.env.local` (or your shell).
 3. Run `pnpm db:generate` after editing `server/schema.ts` to emit SQL into `drizzle/`.
 4. Apply the SQL via `pnpm db:push` (requires the same env) or paste it into the Supabase SQL editor.
+
+> **IPv4 tip:** The default `db.<project>.supabase.co` host is IPv6-only. If your CI/CD runner or laptop lacks IPv6, point `SUPABASE_POOLER_HOST` (and optionally `SUPABASE_POOLER_PORT`) at the pooled IPv4 endpoint shown under **Database → Connection pooling** (`aws-0-<region>.pooler.supabase.com:6543`). Drizzle will swap the host/port automatically before running migrations.
 
 The base migration (`drizzle/0000_supabase_init.sql`) sets up the tables/views + anon read / service-role write policies, so the GitHub Pages frontend can query the cache with only the anon key.
 
@@ -96,15 +100,25 @@ pnpm api:start  # runs compiled API
 pnpm preview    # serves built React bundle for inspection
 ```
 
+## Why Supabase (even though the UI is simple)
+- **Shared cache for every surface.** The API, GitHub Pages UI, Mission Control jobs, and any future CLI all read/write the same Postgres tables, so one scrape instantly benefits all clients.
+- **TTL + refresh orchestration.** Supabase stores `last_cached_at`/`scraped_at` plus refresh metadata that the drizzle migrations enforce. Without it you cannot keep deterministic TTLs across cron jobs, GitHub Actions, and manual refresh clicks.
+- **Row-Level Security for the public UI.** The anon key + RLS policies created by `drizzle/0000_supabase_init.sql` let the public React bundle read cached listings safely while reserving writes to the service role.
+- **Auditability & durability.** Postgres (with JSONB payloads) keeps the raw scraper output, makes confidence scoring reproducible, and gives you a real migration path if you expand suppliers later. Local JSON/SQLite would corrupt easily when the GitHub Action refresh and the API race each other.
+
 ## GitHub Pages deployment
 The repository ships with `.github/workflows/static.yml`, which builds the Vite bundle and deploys `dist/` to Pages. To make the hosted UI work:
 
 1. In **Settings → Pages**, set **Build and deployment** to **GitHub Actions**.
-2. Add either a repository variable or secret named `VITE_API_BASE_URL` that points to your hosted Express API (e.g. Render/Fly/Supabase Functions). The workflow forwards it into `pnpm build` so the static bundle hits the correct origin instead of `/api` on github.io.
-3. (Optional) Override `VITE_BASE_PATH` if you serve from a custom domain; otherwise leave it at `./` so assets resolve when Pages serves from `/partsking/`.
-4. Push to `main`. The workflow installs pnpm, runs `pnpm build`, uploads `dist/`, and `actions/deploy-pages` publishes it.
+2. Add repository variables or secrets for the public Supabase credentials so the static bundle can read cached listings even when the API backend is offline:
+   - `VITE_SUPABASE_URL`
+   - `VITE_SUPABASE_ANON_KEY`
+   - (optional) `VITE_CACHE_TTL_HOURS` if you override the backend TTL
+3. (Optional but recommended) Add `VITE_API_BASE_URL` pointing to your hosted Express API (Render/Fly/etc.). When this is missing, the Pages build runs in **read-only cache mode**—searches pull directly from Supabase and the refresh buttons are disabled. Supplying the API origin unlocks live refresh + scrape-triggering from the UI.
+4. (Optional) Override `VITE_BASE_PATH` if you serve from a custom domain; otherwise leave it at `./` so assets resolve when Pages serves from `/partsking/`.
+5. Push to `main`. The workflow installs pnpm, runs `pnpm build`, uploads `dist/`, and `actions/deploy-pages` publishes it.
 
-Once the deployment succeeds, the Pages URL listed under the `github-pages` environment will load the React front-end and proxy API calls to the host you supplied via `VITE_API_BASE_URL`.
+Once the deployment succeeds, the Pages URL listed under the `github-pages` environment will load the React front-end. Searches will either proxy to the API (when `VITE_API_BASE_URL` is set) or fall back to direct Supabase reads with refresh actions disabled.
 
 ## Scheduled cache refresh (GitHub Actions)
 The repo also includes `.github/workflows/cache-refresh.yml`, which re-runs `pnpm scrape:refresh` on a 6-hour cadence.
@@ -140,7 +154,7 @@ number.
 ## Supplier coverage
 
 We currently prioritize the 11 dealer sites Nicco specified (Jack's Small Engines, Pro Auto Parts Direct, Exmark,
-Menominee Industrial Supply, PorchTree, BMI Karts, Safford Equipment, Chicago Engines, MowPart, RepairClinic,
+Menominee Industrial Supply, PartsTree, BMI Karts, Safford Equipment, Chicago Engines, MowPart, RepairClinic,
 and Stems). See [`docs/SOURCES.md`](docs/SOURCES.md) for exact search endpoints + parser notes.
 
 
@@ -159,5 +173,5 @@ That fetches each supplier catalog (Shopify/WooCommerce/Shift4Shop parsers today
 ### Getting started
 
 - `pnpm install`
-- `cp .env.example .env.local` and set `SERPAPI_KEY`
+- `cp .env.example .env.local` and populate the Supabase + scraper settings
 - `pnpm dev:full` → API on :4000, UI on http://localhost:3765

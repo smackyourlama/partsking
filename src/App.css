@@ -442,6 +442,15 @@ textarea {
   margin: 0;
 }
 
+.muted.warning {
+  color: #b45309;
+  background: rgba(255, 197, 143, 0.18);
+  border-left: 3px solid #f5b869;
+  padding: 0.5rem 0.85rem;
+  border-radius: 8px;
+  margin-top: 0.75rem;
+}
+
 .result-details {
   display: flex;
   justify-content: space-between;
