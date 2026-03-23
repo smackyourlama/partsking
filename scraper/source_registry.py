@@ -6,10 +6,11 @@ from .models import SourceConfig
 
 PLATFORM_SHOPIFY = "shopify"
 PLATFORM_WOOCOMMERCE = "woocommerce"
+PLATFORM_BIGCOMMERCE = "bigcommerce"
 PLATFORM_SHIFT4SHOP = "shift4shop"
 PLATFORM_REPAIRCLINIC = "repairclinic"
 PLATFORM_JACKS = "jacks"
-PLATFORM_SERPAPI = "serpapi"
+PLATFORM_PARTSTREE = "partstree"
 
 SOURCES: List[SourceConfig] = [
   SourceConfig(
@@ -39,15 +40,16 @@ SOURCES: List[SourceConfig] = [
     slug="menindsup",
     label="Menominee Industrial Supply",
     domain="menindsup.com",
-    search_template="https://www.menindsup.com/search?q={query}",
+    search_template="https://menindsup.com/catalogsearch/result/?q={query}",
     parser=PLATFORM_WOOCOMMERCE,
+    notes="Magento storefront currently redirects catalogsearch queries to the login wall without an authenticated session.",
   ),
   SourceConfig(
-    slug="porchtree",
-    label="PorchTree",
-    domain="porchtree.com",
-    search_template="https://porchtree.com/search?q={query}",
-    parser=PLATFORM_SHOPIFY,
+    slug="partstree",
+    label="PartsTree",
+    domain="partstree.com",
+    search_template="https://www.partstree.com/search/?type=part&term={query}",
+    parser=PLATFORM_PARTSTREE,
   ),
   SourceConfig(
     slug="bmikarts",
@@ -74,8 +76,9 @@ SOURCES: List[SourceConfig] = [
     slug="mowpart",
     label="MowPart",
     domain="mowpart.com",
-    search_template="https://www.mowpart.com/search?q={query}",
-    parser=PLATFORM_SHOPIFY,
+    search_template="https://www.mowpart.com/search.php?search_query={query}",
+    parser=PLATFORM_BIGCOMMERCE,
+    notes="BigCommerce storefront; search.php is required for catalog queries.",
   ),
   SourceConfig(
     slug="repairclinic",
@@ -87,34 +90,10 @@ SOURCES: List[SourceConfig] = [
     notes="Heavy Cloudflare; needs stealth fetchers",
   ),
   SourceConfig(
-    slug="stems",
-    label="Stems",
-    domain="stems.com",
-    search_template="https://www.stems.com/search?q={query}",
+    slug="sterns",
+    label="Sterns",
+    domain="sterns.com",
+    search_template="https://www.sterns.com/search?q={query}",
     parser=PLATFORM_SHOPIFY,
-  ),
-  SourceConfig(
-    slug="arrow",
-    label="Arrow Electronics",
-    domain="arrow.com",
-    search_template="https://www.arrow.com/en/products/search?q={query}",
-    parser=PLATFORM_SERPAPI,
-    notes="SerpAPI-backed search (Google organic results).",
-  ),
-  SourceConfig(
-    slug="newark",
-    label="Newark",
-    domain="newark.com",
-    search_template="https://www.newark.com/search?st={query}",
-    parser=PLATFORM_SERPAPI,
-    notes="SerpAPI-backed search (Google organic results).",
-  ),
-  SourceConfig(
-    slug="octopart",
-    label="Octopart",
-    domain="octopart.com",
-    search_template="https://octopart.com/search?q={query}",
-    parser=PLATFORM_SERPAPI,
-    notes="SerpAPI-backed search (Google organic results).",
   ),
 ]

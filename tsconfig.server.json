@@ -2,7 +2,7 @@
   "extends": "./tsconfig.node.json",
   "compilerOptions": {
     "outDir": "./dist/server",
-    "rootDir": "./server",
+    "rootDir": ".",
     "module": "node16",
     "moduleResolution": "node16",
     "target": "ES2022",
@@ -13,7 +13,8 @@
     "composite": true
   },
   "include": [
-    "server/**/*.ts"
+    "server/**/*.ts",
+    "shared/**/*.ts"
   ],
   "exclude": [
     "node_modules",

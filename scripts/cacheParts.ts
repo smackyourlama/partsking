@@ -1,3 +1,4 @@
+import '../server/loadEnv.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { writeCachedResults } from '../server/cacheStore.js'

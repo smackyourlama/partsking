@@ -17,7 +17,7 @@ const buildApiUrl = (path: string, searchParams?: URLSearchParams) => {
   }
   return `${path}${query}`
 }
-const apiBackendAvailable = Boolean(rawApiBaseUrl || import.meta.env.DEV)
+const apiBackendAvailable = Boolean(rawApiBaseUrl)
 
 const CACHE_LIST_LIMIT = 25
 const DEFAULT_CACHE_TTL_HOURS = 24
@@ -450,11 +450,12 @@ function App() {
 
   const handleExport = useCallback(() => {
     if (filteredResults.length === 0) return
-    const headers = ['partNumber', 'source', 'title', 'url', 'price', 'stockStatus', 'confidence', 'origin', 'cachedAt']
+    const headers = ['partNumber', 'source', 'supplier', 'title', 'url', 'price', 'stockStatus', 'confidence', 'origin', 'cachedAt']
     const exportName = partNumber.trim() ? partNumber.trim() : 'parts'
     const rows = filteredResults.map((item) => [
       partNumber.trim() || '',
       item.source,
+      item.supplierName ?? '',
       item.title,
       item.url,
       item.price ?? '',
@@ -695,7 +696,10 @@ function App() {
               {filteredResults.map((result) => (
                 <article key={result.id} className="result-card">
                   <header>
-                    <p className="source">{result.source}</p>
+                    <div>
+                      <p className="source">{result.supplierName ?? result.source}</p>
+                      {result.supplierName && <p className="muted">{result.source}</p>}
+                    </div>
                     <span className="confidence">{Math.round(result.confidence * 100)}% match</span>
                   </header>
                   <a href={result.url} target="_blank" rel="noreferrer">

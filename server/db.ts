@@ -3,15 +3,17 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import fs from 'node:fs'
 import path from 'node:path'
 import type { SearchResult } from './searchService.js'
+import { getSupplierLabel, mapSourceToSupplierSlug } from '../shared/suppliers.js'
 
 export type CachedPartSummary = {
   partNumber: string
   cachedAt: string | null
 }
 
-type CachedListingResponse = {
+export type CachedListingResponse = {
   results: SearchResult[]
   scrapedAt: string
+  isStale: boolean
 }
 
 type CacheStore = {
@@ -43,6 +45,15 @@ export async function pruneListings(maxAgeHours: number) {
   await store.pruneListings(maxAgeHours)
 }
 
+function enrichSearchResult(result: SearchResult): SearchResult {
+  const supplierSlug = result.supplierSlug ?? mapSourceToSupplierSlug(result.source) ?? undefined
+  return {
+    ...result,
+    supplierSlug,
+    supplierName: result.supplierName ?? getSupplierLabel(supplierSlug) ?? undefined,
+  }
+}
+
 function createStore(): CacheStore & { kind: 'supabase' | 'sqlite' } {
   if (process.env.SUPABASE_URL && process.env.SUPABASE_SERVICE_ROLE_KEY) {
     return { kind: 'supabase', ...createSupabaseStore() }
@@ -58,6 +69,7 @@ function createSupabaseStore(): CacheStore {
   }
 
   const supabase: SupabaseClient = createClient(url, serviceKey, { auth: { persistSession: false } })
+  const supplierCache = new Map<string, string | null>()
 
   async function ensurePartRecord(partNumber: string, cachedAt: string) {
     const { data, error } = await supabase
@@ -75,6 +87,32 @@ function createSupabaseStore(): CacheStore {
     return data.id as string
   }
 
+  async function resolveSupplierId(source: string) {
+    const supplierSlug = mapSourceToSupplierSlug(source)
+    if (!supplierSlug) {
+      return null
+    }
+
+    if (supplierCache.has(supplierSlug)) {
+      return supplierCache.get(supplierSlug) ?? null
+    }
+
+    const { data, error } = await supabase
+      .from('suppliers')
+      .select('id')
+      .eq('slug', supplierSlug)
+      .single()
+
+    if (error) {
+      console.warn(`[suppliers] unable to resolve ${supplierSlug}: ${error.message}`)
+      supplierCache.set(supplierSlug, null)
+      return null
+    }
+
+    supplierCache.set(supplierSlug, data?.id ?? null)
+    return data?.id ?? null
+  }
+
   return {
     async writeListings(partNumber, results) {
       const cachedAt = new Date().toISOString()
@@ -89,17 +127,20 @@ function createSupabaseStore(): CacheStore {
         return
       }
 
-      const payload = results.map((item) => ({
-        part_id: partId,
-        part_number: partNumber,
-        source: item.source,
-        title: item.title,
-        url: item.url,
-        price: item.price ?? null,
-        stock_status: item.inStock === undefined ? null : item.inStock ? 'in_stock' : 'out_of_stock',
-        confidence: item.confidence,
-        payload: item,
-      }))
+      const payload = await Promise.all(
+        results.map(async (item) => ({
+          part_id: partId,
+          part_number: partNumber,
+          source: item.source,
+          supplier_id: await resolveSupplierId(item.source),
+          title: item.title,
+          url: item.url,
+          price: item.price ?? null,
+          stock_status: item.inStock === undefined ? null : item.inStock ? 'in_stock' : 'out_of_stock',
+          confidence: item.confidence,
+          payload: item,
+        })),
+      )
 
       const { error: insertError } = await supabase.from('part_listings').insert(payload)
       if (insertError) {
@@ -109,21 +150,40 @@ function createSupabaseStore(): CacheStore {
 
     async readListings(partNumber, maxAgeHours) {
       const cutoff = new Date(Date.now() - maxAgeHours * 60 * 60 * 1000).toISOString()
-      const { data, error } = await supabase
-        .from('part_latest')
-        .select('payload, scraped_at')
-        .eq('part_number', partNumber)
-        .gte('scraped_at', cutoff)
-        .order('scraped_at', { ascending: false })
 
-      if (error) {
-        throw new Error(`[part_latest] read failed: ${error.message}`)
+      const fetchRows = async (after?: string) => {
+        let query = supabase
+          .from('part_latest')
+          .select('payload, scraped_at')
+          .eq('part_number', partNumber)
+          .order('scraped_at', { ascending: false })
+
+        if (after) {
+          query = query.gte('scraped_at', after)
+        }
+
+        const { data, error } = await query
+        if (error) {
+          throw new Error(`[part_latest] read failed: ${error.message}`)
+        }
+        return data ?? []
       }
 
-      if (!data || data.length === 0) return null
-      const scrapedAt = data[0]?.scraped_at ?? new Date().toISOString()
-      const results = data.map((row) => row.payload as SearchResult)
-      return { results, scrapedAt }
+      const freshRows = await fetchRows(cutoff)
+      if (freshRows.length > 0) {
+        const scrapedAt = freshRows[0]?.scraped_at ?? new Date().toISOString()
+        const results = freshRows.map((row) => enrichSearchResult(row.payload as SearchResult))
+        return { results, scrapedAt, isStale: false }
+      }
+
+      const fallbackRows = await fetchRows()
+      if (fallbackRows.length === 0) {
+        return null
+      }
+
+      const scrapedAt = fallbackRows[0]?.scraped_at ?? new Date().toISOString()
+      const results = fallbackRows.map((row) => enrichSearchResult(row.payload as SearchResult))
+      return { results, scrapedAt, isStale: true }
     },
 
     async listPartNumbers() {
@@ -192,10 +252,15 @@ function createSqliteStore(): CacheStore {
        GROUP BY part_number
        ORDER BY last_seen DESC, part_number COLLATE NOCASE`,
   )
-  const readStmt = sqlite.prepare(
+  const readFreshStmt = sqlite.prepare(
     `SELECT payload, scraped_at FROM part_listings
        WHERE part_number = ? AND scraped_at >= datetime('now', ?)
-       ORDER BY confidence DESC`,
+       ORDER BY scraped_at DESC, confidence DESC`,
+  )
+  const readAnyStmt = sqlite.prepare(
+    `SELECT payload, scraped_at FROM part_listings
+       WHERE part_number = ?
+       ORDER BY scraped_at DESC, confidence DESC`,
   )
   const pruneStmt = sqlite.prepare(
     `DELETE FROM part_listings WHERE scraped_at < datetime('now', ?)`
@@ -224,11 +289,21 @@ function createSqliteStore(): CacheStore {
 
     async readListings(partNumber, maxAgeHours) {
       const ttlWindow = `-${maxAgeHours} hours`
-      const rows = readStmt.all(partNumber, ttlWindow) as { payload: string; scraped_at: string }[]
-      if (!rows.length) return null
-      const scrapedAt = rows[0]?.scraped_at ?? new Date().toISOString()
-      const results = rows.map((row) => JSON.parse(row.payload) as SearchResult)
-      return { results, scrapedAt }
+      const freshRows = readFreshStmt.all(partNumber, ttlWindow) as { payload: string; scraped_at: string }[]
+      if (freshRows.length > 0) {
+        const scrapedAt = freshRows[0]?.scraped_at ?? new Date().toISOString()
+        const results = freshRows.map((row) => JSON.parse(row.payload) as SearchResult)
+        return { results, scrapedAt, isStale: false }
+      }
+
+      const fallbackRows = readAnyStmt.all(partNumber) as { payload: string; scraped_at: string }[]
+      if (fallbackRows.length === 0) {
+        return null
+      }
+
+      const scrapedAt = fallbackRows[0]?.scraped_at ?? new Date().toISOString()
+      const results = fallbackRows.map((row) => JSON.parse(row.payload) as SearchResult)
+      return { results, scrapedAt, isStale: true }
     },
 
     async listPartNumbers() {

@@ -97,6 +97,60 @@ def parse_woocommerce(response: Response, part_number: str, source: str) -> List
   return listings
 
 
+def parse_bigcommerce(response: Response, part_number: str, source: str) -> List[ScrapedListing]:
+  listings: List[ScrapedListing] = []
+  cards = response.css('.productGrid li.product, .productGrid .product, .productGrid .card')
+  seen_urls: set[str] = set()
+
+  def _first_text(card_selector) -> str:
+    for raw in card_selector:
+      cleaned = _clean_text(raw)
+      if cleaned:
+        return cleaned
+    return ''
+
+  for card in cards:
+    title = _first_text(card.css('.card-title a::text, .card-title::text').extract())
+    if not title:
+      continue
+    href = card.css('a.card-title::attr(href)').extract_first() or card.css('a::attr(href)').extract_first() or ''
+    url = urljoin(response.url, href)
+    if not url or url in seen_urls:
+      continue
+    seen_urls.add(url)
+    price = _first_text(
+      card.css('.price-section--withoutTax .price::text, .card-price::text, .price::text').extract()
+    )
+    description = ' '.join(
+      text.strip()
+      for text in card.css('.card-text--cart::text, .card-text--price::text, .card-body::text').extract()
+      if text.strip()
+    )
+    stock_note = _first_text(
+      card.css('.stock-level::text, .stock-aggregate-value::text').extract()
+    )
+    in_stock = None
+    if stock_note:
+      lowered = stock_note.lower()
+      if 'in stock' in lowered or 'ships' in lowered or 'available' in lowered:
+        in_stock = True
+      elif 'out of stock' in lowered or 'backorder' in lowered or 'backordered' in lowered:
+        in_stock = False
+    listings.append(
+      ScrapedListing(
+        part_number=part_number,
+        source=source,
+        title=title,
+        url=url,
+        price=price or None,
+        description=description or None,
+        in_stock=in_stock,
+        confidence=compute_confidence(part_number, title),
+      ),
+    )
+  return listings
+
+
 def parse_shift4shop(response: Response, part_number: str, source: str) -> List[ScrapedListing]:
   listings: List[ScrapedListing] = []
   rows = response.css('.product-item, .itemblock')
@@ -173,9 +227,49 @@ def parse_repairclinic(response: Response, part_number: str, source: str) -> Lis
   return listings
 
 
+def parse_partstree(response: Response, part_number: str, source: str) -> List[ScrapedListing]:
+  listings: List[ScrapedListing] = []
+  cards = response.css('.pt-product.catalog.part, .pt-product')
+  for card in cards:
+    title = _clean_text(card.css('.description a::text').extract_first())
+    if not title:
+      continue
+    href = card.css('.description a::attr(href)').extract_first() or ''
+    url = urljoin(response.url, href)
+    price_text = ''.join(text.strip() for text in card.css('.price .price::text').extract() if text.strip())
+    if not price_text:
+      price_text = ''.join(text.strip() for text in card.css('.price::text').extract() if text.strip())
+    currency = _clean_text(card.css('.price .currency::text').extract_first())
+    price = f"{currency}{price_text}".strip() if price_text else ''
+    description = ' '.join(text.strip() for text in card.css('.short-description::text').extract() if text.strip())
+    stock_note = ' '.join(text.strip() for text in card.css('.shipping::text, .availability::text').extract() if text.strip())
+    in_stock = None
+    if stock_note:
+      lowered = stock_note.lower()
+      if 'in stock' in lowered:
+        in_stock = True
+      elif 'out of stock' in lowered or 'backorder' in lowered:
+        in_stock = False
+    listings.append(
+      ScrapedListing(
+        part_number=part_number,
+        source=source,
+        title=title,
+        url=url,
+        price=price or None,
+        description=description or None,
+        in_stock=in_stock,
+        confidence=compute_confidence(part_number, title),
+      ),
+    )
+  return listings
+
+
 PARSER_MAP = {
   'shopify': parse_shopify,
   'woocommerce': parse_woocommerce,
+  'bigcommerce': parse_bigcommerce,
   'shift4shop': parse_shift4shop,
   'repairclinic': parse_repairclinic,
+  'partstree': parse_partstree,
 }

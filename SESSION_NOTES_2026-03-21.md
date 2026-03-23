@@ -8,7 +8,7 @@
   - `pnpm scrape:seed` – populates the SQLite cache from `data/seed_parts.json`.
   - `pnpm scrape:refresh` – re-scrapes only the SKUs that have aged past `PARTSKING_REFRESH_TTL` (dry-run supported).
   - `pnpm prune:cache [hours]` – deletes rows older than the retention window.
-- ✅ README/.env docs updated with all env knobs (`SERPAPI_KEY`, `PARTSKING_DB_PATH`, `PARTSKING_CACHE_TTL_HOURS`, refresh env vars) + pipeline doc now covers the incremental refresher.
+- ✅ README/.env docs updated with all env knobs (`SUPABASE_*`, `PARTSKING_DB_PATH`, `PARTSKING_CACHE_TTL_HOURS`, refresh env vars) + pipeline doc now covers the incremental refresher.
 - ✅ GitHub Pages workflow now builds the Vite bundle with repo-provided `VITE_API_BASE_URL`/`VITE_BASE_PATH` vars, so pushes to `main` auto-deploy the static UI via `actions/deploy-pages`.
 
 ## Outstanding items

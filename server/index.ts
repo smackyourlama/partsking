@@ -1,6 +1,7 @@
-import 'dotenv/config'
+import './loadEnv.js'
 import express from 'express'
 import type { Request, Response } from 'express'
+import cors, { type CorsOptions } from 'cors'
 import { z } from 'zod'
 import { listCachedParts, readCachedResults, writeCachedResults } from './cacheStore.js'
 import { runScraper } from './searchService.js'
@@ -8,7 +9,13 @@ import { runScraper } from './searchService.js'
 const app = express()
 const PORT = process.env.PORT ? Number(process.env.PORT) : 4000
 const CACHE_TTL_HOURS = Number(process.env.PARTSKING_CACHE_TTL_HOURS || 24)
+const allowedOrigins = (process.env.PARTSKING_ALLOWED_ORIGINS ?? '')
+  .split(',')
+  .map((entry) => entry.trim())
+  .filter(Boolean)
+const corsOptions: CorsOptions = allowedOrigins.length ? { origin: allowedOrigins } : { origin: true }
 
+app.use(cors(corsOptions))
 app.use(express.json())
 
 const querySchema = z.object({
@@ -30,24 +37,22 @@ app.get('/api/parts', async (req: Request, res: Response) => {
 
   try {
     const cached = await readCachedResults(partNumber, CACHE_TTL_HOURS)
-    if (cached) {
-      const filteredCache = cached.results.filter((item) => item.confidence >= minConfidence)
-      return res.json({
+    if (!cached) {
+      return res.status(404).json({
+        error: 'No cached data for that part number yet. Use the refresh endpoint or cache seeding workflow first.',
         partNumber,
-        results: filteredCache,
         source: 'cache',
-        cachedAt: cached.scrapedAt,
       })
     }
 
-    const freshResults = await runScraper(partNumber)
-    await writeCachedResults(partNumber, freshResults)
-    const refreshed = await readCachedResults(partNumber, CACHE_TTL_HOURS)
-    if (!refreshed) {
-      throw new Error('Scraper returned no rows')
-    }
-    const filtered = refreshed.results.filter((item) => item.confidence >= minConfidence)
-    res.json({ partNumber, results: filtered, source: 'live', cachedAt: refreshed.scrapedAt })
+    const filteredCache = cached.results.filter((item) => item.confidence >= minConfidence)
+    return res.json({
+      partNumber,
+      results: filteredCache,
+      source: 'cache',
+      cachedAt: cached.scrapedAt,
+      isStale: cached.isStale,
+    })
   } catch (error) {
     console.error('[part-search] error', error)
     res.status(500).json({ error: 'Unable to fetch part data right now.' })
@@ -101,7 +106,7 @@ app.get('/api/cache/:partNumber', async (req: Request, res: Response) => {
     if (!cached) {
       return res.status(404).json({ error: 'No cached data for that part number yet.' })
     }
-    res.json({ results: cached.results, cachedAt: cached.scrapedAt })
+    res.json({ results: cached.results, cachedAt: cached.scrapedAt, isStale: cached.isStale })
   } catch (error) {
     console.error('[cache:fetch] error', error)
     res.status(500).json({ error: 'Unable to read cache entry right now.' })
@@ -126,6 +131,7 @@ app.post('/api/cache/:partNumber/refresh', async (req: Request, res: Response) =
       results: refreshed?.results ?? freshResults,
       cachedAt: refreshed?.scrapedAt ?? new Date().toISOString(),
       source: 'live',
+      isStale: false,
     })
   } catch (error) {
     console.error('[cache:refresh] error', error)

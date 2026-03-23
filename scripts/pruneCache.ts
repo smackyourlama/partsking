@@ -1,3 +1,4 @@
+import '../server/loadEnv.js'
 import { pruneListings } from '../server/db.js'
 
 const hours = process.argv[2] ? Number(process.argv[2]) : 24

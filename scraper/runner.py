@@ -2,18 +2,71 @@ from __future__ import annotations
 
 import argparse
 import json
-import sys
 from dataclasses import asdict
 from pathlib import Path
 from typing import List
 
-from scrapling import Fetcher
+import requests
+from requests import Response as RequestsResponse
+from requests.exceptions import RequestException
+import urllib3
+
+from scrapling.engines.toolbelt.custom import Response as ScraplingResponse
 
 from .models import ScrapedListing
 from .parsers import PARSER_MAP
-from .serpapi import search_serpapi
-from .source_registry import SOURCES, PLATFORM_JACKS, PLATFORM_REPAIRCLINIC, PLATFORM_SERPAPI
+from .source_registry import SOURCES, PLATFORM_JACKS, PLATFORM_REPAIRCLINIC
 from .utils import write_to_sqlite
+
+DEFAULT_TIMEOUT = 15
+DEFAULT_HEADERS = {
+  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0 Safari/537.36',
+  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+  'Connection': 'keep-alive',
+}
+
+_session = requests.Session()
+_session.headers.update(DEFAULT_HEADERS)
+_session.verify = False
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+
+
+def _to_scrapling_response(resp: RequestsResponse, request_headers: dict[str, str]) -> ScraplingResponse:
+  cookies = tuple(resp.cookies.items())
+  history = [{'status': h.status_code, 'url': h.url} for h in resp.history] if resp.history else []
+  encoding = resp.encoding or resp.apparent_encoding or 'utf-8'
+  method = resp.request.method if resp.request else 'GET'
+  return ScraplingResponse(
+    url=resp.url,
+    content=resp.content,
+    status=resp.status_code,
+    reason=resp.reason or '',
+    cookies=cookies,
+    headers=dict(resp.headers),
+    request_headers=request_headers,
+    encoding=encoding,
+    method=method,
+    history=history,
+  )
+
+
+def _fetch_source(source, part_number: str) -> ScraplingResponse | None:
+  url = source.search_template.format(query=part_number)
+  headers = {**DEFAULT_HEADERS, **(source.headers or {})}
+  timeout = source.timeout or DEFAULT_TIMEOUT
+  print(f"[fetch] {source.label} -> {url}")
+  try:
+    response = _session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+  except RequestException as error:  # noqa: BLE001
+    print(f"  ! fetch failed: {error}")
+    return None
+
+  if response.status_code >= 400:
+    print(f"  ! fetch failed with status {response.status_code}")
+    return None
+
+  return _to_scrapling_response(response, headers)
 
 
 def run_for_part(part_number: str, limit_per_source: int | None = None) -> List[ScrapedListing]:
@@ -23,20 +76,8 @@ def run_for_part(part_number: str, limit_per_source: int | None = None) -> List[
       print(f"[skip] {source.label} requires stealth fetcher (coming soon)")
       continue
 
-    if source.parser == PLATFORM_SERPAPI:
-      listings = search_serpapi(part_number, source)
-      if limit_per_source:
-        listings = listings[:limit_per_source]
-      print(f"[serpapi] {source.label} → {len(listings)} listing(s)")
-      aggregated.extend(listings)
-      continue
-
-    url = source.search_template.format(query=part_number)
-    print(f"[fetch] {source.label} -> {url}")
-    try:
-      response = Fetcher.get(url, verify=False)
-    except Exception as error:  # noqa: BLE001
-      print(f"  ! fetch failed: {error}")
+    response = _fetch_source(source, part_number)
+    if response is None:
       continue
 
     parser = PARSER_MAP.get(source.parser)
@@ -44,7 +85,7 @@ def run_for_part(part_number: str, limit_per_source: int | None = None) -> List[
       print(f"  ! no parser registered for {source.parser}")
       continue
 
-    listings = parser(response, part_number, source.label)
+    listings = parser(response, part_number, source.slug)
     if limit_per_source:
       listings = listings[:limit_per_source]
     print(f"  → {len(listings)} listings")
@@ -54,7 +95,7 @@ def run_for_part(part_number: str, limit_per_source: int | None = None) -> List[
 
 
 def main():
-  parser = argparse.ArgumentParser(description="Scrape supplier catalogs via Scrapling and populate SQLite cache")
+  parser = argparse.ArgumentParser(description="Scrape supplier catalogs via HTTP clients and populate SQLite cache")
   parser.add_argument('--part', required=True, help='Part number / SKU to search for')
   parser.add_argument('--limit', type=int, default=None, help='Max results per source (optional)')
   parser.add_argument('--write', action='store_true', help='Persist results into data/parts.db')
@@ -74,7 +115,6 @@ def main():
     output_path.write_text(json.dumps(payload, indent=2))
     print(f"[json] wrote {len(payload)} rows to {output_path}")
   elif not args.write:
-    # Legacy behaviour: emit JSON to stdout when --write is not provided
     print(json.dumps(payload, indent=2))
 
 

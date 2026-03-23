@@ -25,3 +25,5 @@ class SourceConfig:
   parser: str
   requires_stealth: bool = False
   notes: Optional[str] = None
+  headers: dict[str, str] | None = None
+  timeout: float | None = None

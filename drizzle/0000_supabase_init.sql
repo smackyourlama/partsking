@@ -58,10 +58,12 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
+DROP TRIGGER IF EXISTS set_parts_updated_at ON public.parts;
 CREATE TRIGGER set_parts_updated_at
 BEFORE UPDATE ON public.parts
 FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
 
+DROP TRIGGER IF EXISTS set_suppliers_updated_at ON public.suppliers;
 CREATE TRIGGER set_suppliers_updated_at
 BEFORE UPDATE ON public.suppliers
 FOR EACH ROW EXECUTE PROCEDURE public.set_updated_at();
@@ -92,44 +94,52 @@ ALTER TABLE public.suppliers ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.part_listings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.refresh_runs ENABLE ROW LEVEL SECURITY;
 
+DROP POLICY IF EXISTS anon_read_parts ON public.parts;
 CREATE POLICY anon_read_parts
   ON public.parts
   FOR SELECT
   USING (auth.role() IN ('anon', 'authenticated'));
 
+DROP POLICY IF EXISTS service_rw_parts ON public.parts;
 CREATE POLICY service_rw_parts
   ON public.parts
   FOR ALL
   USING (auth.role() = 'service_role')
   WITH CHECK (auth.role() = 'service_role');
 
+DROP POLICY IF EXISTS anon_read_suppliers ON public.suppliers;
 CREATE POLICY anon_read_suppliers
   ON public.suppliers
   FOR SELECT
   USING (auth.role() IN ('anon', 'authenticated'));
 
+DROP POLICY IF EXISTS service_rw_suppliers ON public.suppliers;
 CREATE POLICY service_rw_suppliers
   ON public.suppliers
   FOR ALL
   USING (auth.role() = 'service_role')
   WITH CHECK (auth.role() = 'service_role');
 
+DROP POLICY IF EXISTS anon_read_part_listings ON public.part_listings;
 CREATE POLICY anon_read_part_listings
   ON public.part_listings
   FOR SELECT
   USING (auth.role() IN ('anon', 'authenticated'));
 
+DROP POLICY IF EXISTS service_rw_part_listings ON public.part_listings;
 CREATE POLICY service_rw_part_listings
   ON public.part_listings
   FOR ALL
   USING (auth.role() = 'service_role')
   WITH CHECK (auth.role() = 'service_role');
 
+DROP POLICY IF EXISTS service_view_refresh_runs ON public.refresh_runs;
 CREATE POLICY service_view_refresh_runs
   ON public.refresh_runs
   FOR SELECT
   USING (auth.role() = 'service_role');
 
+DROP POLICY IF EXISTS service_manage_refresh_runs ON public.refresh_runs;
 CREATE POLICY service_manage_refresh_runs
   ON public.refresh_runs
   FOR ALL
@@ -142,13 +152,13 @@ VALUES
   ('proautopartsdirect', 'Pro Auto Parts Direct', 'https://proautopartsdirect.com', 'Shopify storefront'),
   ('exmark-shop', 'Exmark Shop', 'https://shop.exmark.com', 'React storefront; pre-rendered HTML'),
   ('menominee-industrial', 'Menominee Industrial Supply', 'https://www.menindsup.com', 'BigCommerce storefront'),
-  ('porchtree', 'PorchTree', 'https://porchtree.com', 'Shopify storefront'),
+  ('partstree', 'PartsTree', 'https://www.partstree.com', 'OEM catalog storefront'),
   ('bmi-karts', 'BMI Karts', 'https://www.bmikarts.com', 'Shift4Shop storefront'),
   ('safford-equipment', 'Safford Equipment', 'https://saffordequipment.com', 'WooCommerce storefront'),
   ('chicago-engines', 'Chicago Engines', 'https://chicagoengines.com', 'WooCommerce storefront'),
   ('mowpart', 'MowPart', 'https://www.mowpart.com', 'Shopify storefront'),
   ('repairclinic', 'RepairClinic', 'https://www.repairclinic.com', 'Cloudflare protected; needs stealth'),
-  ('stems', 'Stems', 'https://www.stems.com', 'Shopify storefront')
+  ('sterns', 'Sterns', 'https://www.sterns.com', 'Shopify storefront')
 ON CONFLICT (slug) DO UPDATE SET
   name = EXCLUDED.name,
   website = EXCLUDED.website,

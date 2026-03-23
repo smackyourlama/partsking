@@ -1,7 +1,7 @@
 # PartsKing scraper pipeline (draft)
 
 ## Objectives
-- Build a repeatable ingest job that pulls listings from Amazon, eBay, Digi-Key, Mouser (and future suppliers) via SerpAPI or native adapters.
+- Build a repeatable ingest job that pulls listings from the prioritized suppliers (Shopify, WooCommerce, Shift4Shop, RepairClinic, etc.) via Scrapling adapters.
 - Normalize the data into a single `part_listings` table for local queries.
 - Support two execution modes:
   1. **Seed crawl** – full refresh over the part catalog.

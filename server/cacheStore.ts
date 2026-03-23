@@ -1,8 +1,8 @@
 import { listPartNumbers, readListings, writeListings } from './db.js'
-import type { CachedPartSummary } from './db.js'
+import type { CachedListingResponse, CachedPartSummary } from './db.js'
 import type { SearchResult } from './searchService.js'
 
-export async function readCachedResults(partNumber: string, maxAgeHours = 24) {
+export async function readCachedResults(partNumber: string, maxAgeHours = 24): Promise<CachedListingResponse | null> {
   return readListings(partNumber, maxAgeHours)
 }
 

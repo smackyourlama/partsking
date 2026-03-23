@@ -1,4 +1,4 @@
-import 'dotenv/config'
+import '../server/loadEnv.js'
 import fs from 'node:fs'
 import path from 'node:path'
 import { listCachedParts, readCachedResults, writeCachedResults } from '../server/cacheStore.js'
@@ -38,8 +38,10 @@ function parseArgs(argv: string[]) {
 }
 
 const cliOptions = parseArgs(process.argv.slice(2))
-const ttlHours = cliOptions.ttl && !Number.isNaN(cliOptions.ttl) ? cliOptions.ttl : DEFAULT_TTL
-const limit = cliOptions.limit && !Number.isNaN(cliOptions.limit) ? cliOptions.limit : DEFAULT_LIMIT
+const ttlHours =
+  cliOptions.ttl !== undefined && !Number.isNaN(cliOptions.ttl) ? cliOptions.ttl : DEFAULT_TTL
+const limit =
+  cliOptions.limit !== undefined && !Number.isNaN(cliOptions.limit) ? cliOptions.limit : DEFAULT_LIMIT
 const inputPath = cliOptions.input || process.env.PARTSKING_REFRESH_LIST || DEFAULT_INPUT
 const dryRun = Boolean(cliOptions.dryRun)
 
@@ -88,9 +90,16 @@ async function refresh() {
     const cached = await readCachedResults(part, ttlHours)
     if (!cached) {
       toRefresh.push(part)
-    } else {
-      console.log(`✓ ${part} is fresh (cached ${cached.scrapedAt})`)
+      continue
     }
+
+    if (cached.isStale) {
+      console.log(`! ${part} is stale (cached ${cached.scrapedAt})`)
+      toRefresh.push(part)
+      continue
+    }
+
+    console.log(`✓ ${part} is fresh (cached ${cached.scrapedAt})`)
   }
 
   if (toRefresh.length === 0) {

@@ -3,10 +3,13 @@ import { randomUUID } from 'node:crypto'
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import os from 'node:os'
 import path from 'node:path'
+import { getSupplierLabel, mapSourceToSupplierSlug } from '../shared/suppliers.js'
 
 export type SearchResult = {
   id: string
   source: string
+  supplierSlug?: string
+  supplierName?: string
   title: string
   url: string
   price?: string
@@ -36,10 +39,13 @@ function mapListings(partNumber: string, rows: RawScrapedListing[]): SearchResul
     const identifier = resolvedPartNumber
       ? `${resolvedPartNumber}-${row.source}-${index}-${Date.now()}`
       : randomUUID()
+    const supplierSlug = mapSourceToSupplierSlug(row.source) ?? undefined
 
     return {
       id: identifier,
       source: row.source,
+      supplierSlug,
+      supplierName: getSupplierLabel(supplierSlug) ?? undefined,
       title: row.title,
       url: row.url,
       price: row.price ?? undefined,
