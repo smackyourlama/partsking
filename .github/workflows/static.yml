@@ -35,14 +35,28 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
+      - name: Generate Vite env file
+        run: |
+          if [ -z "${SUPABASE_URL}" ] || [ -z "${SUPABASE_ANON_KEY}" ]; then
+            echo "Supabase credentials are missing. Set VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY as repo secrets or variables."
+            exit 1
+          fi
+
+          cat <<EOF > .env.production
+          VITE_SUPABASE_URL=${SUPABASE_URL}
+          VITE_SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+          VITE_CACHE_TTL_HOURS=${CACHE_TTL}
+          EOF
+        env:
+          SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY }}
+          CACHE_TTL: ${{ vars.VITE_CACHE_TTL_HOURS || '24' }}
+
       - name: Build site
         run: pnpm build
         env:
           VITE_BASE_PATH: ${{ vars.VITE_BASE_PATH || './' }}
           VITE_API_BASE_URL: ${{ secrets.VITE_API_BASE_URL || vars.VITE_API_BASE_URL || '' }}
-          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL || vars.VITE_SUPABASE_URL || '' }}
-          VITE_SUPABASE_ANON_KEY: ${{ secrets.VITE_SUPABASE_ANON_KEY || vars.VITE_SUPABASE_ANON_KEY || '' }}
-          VITE_CACHE_TTL_HOURS: ${{ vars.VITE_CACHE_TTL_HOURS || '24' }}
 
       - name: Upload GitHub Pages artifact
         uses: actions/upload-pages-artifact@v3
