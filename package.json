@@ -13,9 +13,12 @@
     "preview": "vite preview",
     "db:generate": "drizzle-kit generate:pg",
     "db:push": "drizzle-kit push:pg",
-    "scrape:seed": "tsx scripts/cacheParts.ts",
-    "scrape:part": "tsx scripts/runPart.ts",
-    "scrape:refresh": "tsx scripts/refreshCache.ts",
+    "ingest:seed": "tsx scripts/cacheParts.ts",
+    "ingest:part": "tsx scripts/runPart.ts",
+    "ingest:refresh": "tsx scripts/refreshCache.ts",
+    "scrape:seed": "pnpm ingest:seed",
+    "scrape:part": "pnpm ingest:part",
+    "scrape:refresh": "pnpm ingest:refresh",
     "prune:cache": "tsx scripts/pruneCache.ts"
   },
   "dependencies": {

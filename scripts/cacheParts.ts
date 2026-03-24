@@ -20,7 +20,7 @@ if (!Array.isArray(parts) || parts.length === 0) {
 async function cachePart(partNumber: string) {
   const trimmed = partNumber.trim()
   if (!trimmed) return
-  console.log(`→ warming cache for ${trimmed}`)
+  console.log(`→ ingesting ${trimmed} into Supabase catalog`)
   try {
     const results = await runScraper(trimmed)
     await writeCachedResults(trimmed, results)
@@ -34,7 +34,7 @@ async function main() {
   for (const part of parts) {
     await cachePart(String(part))
   }
-  console.log('Seed warm-up complete.')
+  console.log('Seed ingestion complete.')
 }
 
 void main()
