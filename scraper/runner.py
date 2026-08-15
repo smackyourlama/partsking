@@ -11,12 +11,13 @@ from requests import Response as RequestsResponse
 from requests.exceptions import RequestException
 import urllib3
 
+from scrapling import DynamicFetcher, Fetcher
 from scrapling.engines.toolbelt.custom import Response as ScraplingResponse
 
 from .models import ScrapedListing
 from .parsers import PARSER_MAP
 from .source_registry import SOURCES, PLATFORM_JACKS, PLATFORM_REPAIRCLINIC
-from .utils import write_to_sqlite
+from .utils import canonicalize_part_number, write_to_sqlite
 
 DEFAULT_TIMEOUT = 15
 DEFAULT_HEADERS = {
@@ -51,31 +52,74 @@ def _to_scrapling_response(resp: RequestsResponse, request_headers: dict[str, st
   )
 
 
-def _fetch_source(source, part_number: str) -> ScraplingResponse | None:
-  url = source.search_template.format(query=part_number)
-  headers = {**DEFAULT_HEADERS, **(source.headers or {})}
-  timeout = source.timeout or DEFAULT_TIMEOUT
-  print(f"[fetch] {source.label} -> {url}")
+def _fetch_via_requests(url: str, headers: dict[str, str], timeout: int) -> ScraplingResponse | None:
   try:
     response = _session.get(url, headers=headers, timeout=timeout, allow_redirects=True)
   except RequestException as error:  # noqa: BLE001
-    print(f"  ! fetch failed: {error}")
+    print(f"  ! requests fetch failed: {error}")
     return None
 
   if response.status_code >= 400:
-    print(f"  ! fetch failed with status {response.status_code}")
+    print(f"  ! requests fetch failed with status {response.status_code}")
     return None
 
   return _to_scrapling_response(response, headers)
 
 
+def _fetch_via_scrapling(url: str, headers: dict[str, str], timeout: int, use_dynamic: bool = False) -> ScraplingResponse | None:
+  try:
+    if use_dynamic:
+      response = DynamicFetcher.fetch(
+        url,
+        headless=True,
+        disable_resources=True,
+        network_idle=True,
+        timeout=timeout * 1000,
+      )
+    else:
+      response = Fetcher.get(
+        url,
+        follow_redirects=True,
+        timeout=timeout * 1000,
+        headers=headers,
+      )
+  except Exception as error:  # noqa: BLE001
+    print(f"  ! scrapling fetch failed: {error}")
+    return None
+
+  if getattr(response, 'status', 0) >= 400:
+    print(f"  ! scrapling fetch failed with status {response.status}")
+    return None
+
+  return response
+
+
+def _fetch_source(source, part_number: str) -> ScraplingResponse | None:
+  url = source.search_template.format(query=part_number)
+  headers = {**DEFAULT_HEADERS, **(source.headers or {})}
+  timeout = source.timeout or DEFAULT_TIMEOUT
+  print(f"[fetch] {source.label} -> {url}")
+
+  if source.requires_stealth:
+    response = _fetch_via_scrapling(url, headers, timeout, use_dynamic=True)
+    if response is not None:
+      return response
+    print("  ! falling back to non-browser Scrapling fetch")
+    response = _fetch_via_scrapling(url, headers, timeout, use_dynamic=False)
+    if response is not None:
+      return response
+  else:
+    response = _fetch_via_scrapling(url, headers, timeout, use_dynamic=False)
+    if response is not None:
+      return response
+
+  print("  ! falling back to requests session")
+  return _fetch_via_requests(url, headers, timeout)
+
+
 def run_for_part(part_number: str, limit_per_source: int | None = None) -> List[ScrapedListing]:
   aggregated: List[ScrapedListing] = []
   for source in SOURCES:
-    if source.parser in {PLATFORM_JACKS, PLATFORM_REPAIRCLINIC}:
-      print(f"[skip] {source.label} requires stealth fetcher (coming soon)")
-      continue
-
     response = _fetch_source(source, part_number)
     if response is None:
       continue
@@ -102,10 +146,11 @@ def main():
   parser.add_argument('--json-out', type=str, help='Write normalized listings to this JSON file (node ingestion)')
   args = parser.parse_args()
 
-  listings = run_for_part(args.part, args.limit)
+  normalized_part = canonicalize_part_number(args.part) or args.part.strip()
+  listings = run_for_part(normalized_part, args.limit)
 
   if args.write and listings:
-    write_to_sqlite(args.part, listings)
+    write_to_sqlite(normalized_part, listings)
     print(f"[db] Wrote {len(listings)} rows into listings table")
 
   payload = [asdict(listing) for listing in listings]

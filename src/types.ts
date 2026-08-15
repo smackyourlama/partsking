@@ -9,4 +9,6 @@ export type SearchResult = {
   description?: string
   inStock?: boolean
   confidence: number
+  alternatePartNumbers?: string[]
+  matchedPartNumber?: string
 }

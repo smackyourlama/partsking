@@ -119,6 +119,7 @@ type SupabaseCacheRow = {
 }
 
 type SupabaseListingRow = {
+  part_number: string | null
   payload: SearchResult | null
   scraped_at: string | null
 }
@@ -136,7 +137,27 @@ const computeIsStale = (cachedAt: string | null) => {
   return Date.now() - ts > SUPABASE_TTL_MS
 }
 
-const normalizePartNumber = (value: string) => value.trim()
+const normalizePartNumber = (value: string) => value.trim().toUpperCase().replace(/[^A-Z0-9]/g, '')
+
+const buildLooseIlikePattern = (value: string) => {
+  const compact = normalizePartNumber(value)
+  if (!compact) return ''
+  return `%${compact.split('').join('%')}%`
+}
+
+const extractAlternatePartNumbers = (payload: Record<string, unknown>) => {
+  const raw = payload.alternatePartNumbers
+  if (!Array.isArray(raw)) return [] as string[]
+  return raw
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean)
+}
+
+const partNumbersEquivalent = (left: string, right: string) => {
+  const normalizedLeft = normalizePartNumber(left)
+  const normalizedRight = normalizePartNumber(right)
+  return Boolean(normalizedLeft) && normalizedLeft === normalizedRight
+}
 
 const fetchSupabaseCacheSummary = async (limit: number) => {
   if (!supabaseClient) {
@@ -173,17 +194,42 @@ const fetchSupabaseListings = async (partNumber: string) => {
   if (!supabaseClient) return []
   const normalized = normalizePartNumber(partNumber)
   if (!normalized) return []
-  const { data, error } = await supabaseClient
+
+  const exactMatchPromise = supabaseClient
     .from('part_latest')
-    .select('payload, scraped_at')
+    .select('part_number, payload, scraped_at')
     .eq('part_number', normalized)
     .order('scraped_at', { ascending: false })
 
-  if (error) {
-    throw new Error(error.message)
+  const loosePattern = buildLooseIlikePattern(partNumber)
+  const fuzzyMatchPromise = loosePattern
+    ? supabaseClient
+        .from('part_latest')
+        .select('part_number, payload, scraped_at')
+        .ilike('part_number', loosePattern)
+        .order('scraped_at', { ascending: false })
+        .limit(250)
+    : Promise.resolve({ data: [], error: null })
+
+  const [exactResult, fuzzyResult] = await Promise.all([exactMatchPromise, fuzzyMatchPromise])
+
+  if (exactResult.error) {
+    throw new Error(exactResult.error.message)
   }
 
-  return (data ?? []) as SupabaseListingRow[]
+  if (fuzzyResult.error) {
+    throw new Error(fuzzyResult.error.message)
+  }
+
+  const deduped = new Map<string, SupabaseListingRow>()
+  for (const row of [...(exactResult.data ?? []), ...(fuzzyResult.data ?? [])]) {
+    const key = `${row.part_number ?? ''}::${row.scraped_at ?? ''}::${JSON.stringify(row.payload ?? {})}`
+    if (!deduped.has(key)) {
+      deduped.set(key, row as SupabaseListingRow)
+    }
+  }
+
+  return Array.from(deduped.values())
 }
 
 const selectRowsWithTtl = (rows: SupabaseListingRow[]) => {
@@ -203,18 +249,45 @@ const selectRowsWithTtl = (rows: SupabaseListingRow[]) => {
   return { selected: rows, isStale: true }
 }
 
-const fetchSupabaseSearchResults = async (partNumber: string, minConfidence: number): Promise<CatalogResult | null> => {
+const mapSelectedRowsToResults = (rows: SupabaseListingRow[], partNumber: string) => {
+  const normalizedQuery = normalizePartNumber(partNumber)
+
+  return rows.reduce<SearchResult[]>((acc, row) => {
+    if (!row.payload) {
+      return acc
+    }
+
+    const rowPartNumber = typeof row.part_number === 'string' ? row.part_number : ''
+    const alternates = extractAlternatePartNumbers((row.payload ?? {}) as Record<string, unknown>)
+    const matchesPrimary = partNumbersEquivalent(rowPartNumber, normalizedQuery)
+    const matchesAlternate = alternates.some((alternate) => partNumbersEquivalent(alternate, normalizedQuery))
+
+    if (!matchesPrimary && !matchesAlternate) {
+      return acc
+    }
+
+    const matchedPartNumber = [rowPartNumber, ...alternates].find((candidate) => partNumbersEquivalent(candidate, normalizedQuery))
+
+    acc.push({
+      ...row.payload,
+      alternatePartNumbers: alternates,
+      matchedPartNumber,
+    })
+
+    return acc
+  }, [])
+}
+
+const fetchSupabaseSearchResults = async (partNumber: string): Promise<CatalogResult | null> => {
   if (!supabaseClient) return null
   const rows = await fetchSupabaseListings(partNumber)
   if (rows.length === 0) return null
 
   const { selected, isStale } = selectRowsWithTtl(rows)
-  const filteredResults = selected
-    .map((row) => row.payload)
-    .filter((entry): entry is SearchResult => Boolean(entry && typeof entry.confidence === 'number' && entry.confidence >= minConfidence))
+  const results = mapSelectedRowsToResults(selected, partNumber)
 
   return {
-    results: filteredResults,
+    results,
     cachedAt: selected[0]?.scraped_at ?? null,
     isStale,
   }
@@ -225,9 +298,7 @@ const fetchSupabaseCacheEntry = async (partNumber: string) => {
   const rows = await fetchSupabaseListings(partNumber)
   if (rows.length === 0) return null
   const { selected, isStale } = selectRowsWithTtl(rows)
-  const mapped = selected
-    .map((row) => row.payload)
-    .filter((entry): entry is SearchResult => Boolean(entry))
+  const mapped = mapSelectedRowsToResults(selected, partNumber)
 
   return {
     results: mapped,
@@ -279,9 +350,26 @@ function App() {
     () => results.filter((item) => item.confidence >= minConfidence),
     [results, minConfidence],
   )
+  const hasSearched = resultOrigin !== null || cachedAt !== null || error !== null || results.length > 0
+  const noVisibleMatches = hasSearched && results.length > 0 && filteredResults.length === 0
 
   const staleCount = useMemo(() => cachedParts.filter((entry) => entry.isStale).length, [cachedParts])
   const ttlDisplay = cacheTtlHours ?? DEFAULT_CACHE_TTL_HOURS
+
+  useEffect(() => {
+    if (results.length === 0) return
+
+    if (filteredResults.length === 0) {
+      setError('That part exists in Supabase, but none of the stored listings meet the current confidence filter. Lower the threshold to view weaker matches.')
+      return
+    }
+
+    setError((current) =>
+      current === 'That part exists in Supabase, but none of the stored listings meet the current confidence filter. Lower the threshold to view weaker matches.'
+        ? null
+        : current,
+    )
+  }, [filteredResults.length, results.length])
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
@@ -303,7 +391,7 @@ function App() {
         throw new Error('Supabase is not configured for this build.')
       }
 
-      const supaData = await fetchSupabaseSearchResults(trimmedPart, minConfidence)
+      const supaData = await fetchSupabaseSearchResults(trimmedPart)
       if (!supaData) {
         throw new Error('No catalog entry exists for that part yet. Populate Supabase first, then search again.')
       }
@@ -312,7 +400,9 @@ function App() {
       setResultOrigin(supaData.isStale ? 'stale-catalog' : 'catalog')
       setCachedAt(supaData.cachedAt ?? null)
       if (supaData.results.length === 0) {
-        setError('That part exists in Supabase, but there are no listings above the current confidence threshold.')
+        setError('That part exists in Supabase, but it does not contain any stored listings yet.')
+      } else if (!supaData.results.some((item) => item.confidence >= minConfidence)) {
+        setError('That part exists in Supabase, but none of the stored listings meet the current confidence filter. Lower the threshold to view weaker matches.')
       }
     } catch (err) {
       const friendly = err instanceof Error ? err.message : 'Unexpected error occurred.'
@@ -526,7 +616,13 @@ function App() {
 
           {filteredResults.length === 0 && !isLoading ? (
             <div className="empty-state">
-              <p>Search a part number to load matching rows from Supabase.</p>
+              <p>
+                {noVisibleMatches
+                  ? `No stored listings meet the current confidence filter (${minConfidence.toFixed(1)}+). Lower the threshold to view weaker matches.`
+                  : hasSearched
+                    ? 'No stored listings are available for that part yet.'
+                    : 'Search a part number to load matching rows from Supabase.'}
+              </p>
             </div>
           ) : (
             <div className="result-grid">
@@ -543,6 +639,12 @@ function App() {
                     <h3>{result.title}</h3>
                   </a>
                   {result.description && <p className="muted">{result.description}</p>}
+                  {result.matchedPartNumber && !partNumbersEquivalent(result.matchedPartNumber, partNumber) && (
+                    <p className="muted">Matched via alternate number: {result.matchedPartNumber}</p>
+                  )}
+                  {result.alternatePartNumbers && result.alternatePartNumbers.length > 0 && (
+                    <p className="muted">Alternate numbers: {result.alternatePartNumbers.join(', ')}</p>
+                  )}
                   <div className="result-details">
                     {result.price && <span className="price">{result.price}</span>}
                     {result.inStock !== undefined && (
